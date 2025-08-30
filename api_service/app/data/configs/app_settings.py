@@ -23,5 +23,6 @@ class AppSettings(BaseSettings):
 
     # Services
     GEMINI_API_KEY: str
+    GEMINI_AI_MODEL: str = "gemini-2.5-flash"
 
 settings = AppSettings()

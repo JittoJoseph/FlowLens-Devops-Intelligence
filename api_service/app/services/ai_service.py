@@ -1,5 +1,4 @@
 # api_service/app/services/ai_service.py
-
 import json
 import re
 from loguru import logger
@@ -7,65 +6,79 @@ from google import genai
 from google.genai import types
 from app.data.configs.app_settings import settings
 
-# Configure the Gemini API client
+
+# --- Configure Gemini client with single API key ---
 try:
-    genai.configure(api_key=settings.GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    MODEL_NAME = settings.GEMINI_AI_MODEL
     logger.success("Gemini API configured successfully.")
 except Exception as e:
-    logger.critical(f"Failed to configure Gemini API: {e}")
-    model = None
+    logger.critical(f"FATAL: Failed to configure Gemini API. AI features will be disabled. Error: {e}")
+    client = None
+    MODEL_NAME = None
 
-def load_prompt_template() -> str:
-    """Loads the prompt from the text file."""
-    try:
-        with open("app/data/prompts/get_insight.txt", "r") as f:
-            return f.read()
-    except FileNotFoundError:
-        logger.error("Prompt file 'get_insight.txt' not found!")
-        return ""
 
-PROMPT_TEMPLATE = load_prompt_template()
+# --- Load prompt template ---
+PROMPT_TEMPLATE = ""
+try:
+    with open("app/data/prompts/get_insight.txt", "r") as f:
+        PROMPT_TEMPLATE = f.read()
+except FileNotFoundError:
+    logger.error("FATAL: Prompt file 'get_insight.txt' not found!")
+
 
 def _clean_json_response(raw_response: str) -> str:
-    """Cleans the typical markdown formatting from AI JSON responses."""
-    # Find the JSON block within ```json ... ```
+    """Extract JSON from inside ```json ... ``` blocks if present."""
     match = re.search(r'```json\s*([\s\S]*?)\s*```', raw_response)
     if match:
         return match.group(1).strip()
-    # Fallback for responses without markdown
     return raw_response.strip()
+
 
 async def get_ai_insights(pr_data: dict) -> dict | None:
     """
-    Generates AI insights for a pull request using the Gemini API.
+    Generate AI insights for a PR using Gemini.
+    Expects `pr_data` to have keys: pr_number, author, branch_name, title, files_changed.
     """
-    if not model or not PROMPT_TEMPLATE:
+    if not client or not PROMPT_TEMPLATE:
         logger.error("AI service is not configured. Cannot get insights.")
         return None
 
-    # Prepare the files_changed string for the prompt
     files_str = "\n".join(f"- {file}" for file in pr_data.get("files_changed", []))
-
     prompt = PROMPT_TEMPLATE.format(
         author=pr_data.get("author", "N/A"),
         branch_name=pr_data.get("branch_name", "N/A"),
         commit_message=pr_data.get("title", "N/A"),
         files_changed=files_str
     )
-    
-    logger.info(f"Requesting AI insight for PR #{pr_data.get('pr_number')}")
+
+    pr_number = pr_data.get('pr_number')
+    logger.info(f"Requesting AI insight for PR #{pr_number}")
+
     try:
-        response = await model.generate_content_async(prompt)
+        generation_config = types.GenerateContentConfig(
+            temperature=0.3,
+            max_output_tokens=1024,
+        )
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+            config=generation_config,
+        )
+
         cleaned_response = _clean_json_response(response.text)
-        
         insight_json = json.loads(cleaned_response)
-        logger.success(f"Successfully generated AI insight for PR #{pr_data.get('pr_number')}")
+
+        logger.success(f"Successfully generated AI insight for PR #{pr_number}")
         return insight_json
 
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to decode JSON from AI response: {e}. Response was: {response.text}")
+        logger.error(
+            f"Failed to decode JSON from AI response for PR #{pr_number}. "
+            f"Response: {response.text}",
+            exception=e
+        )
         return None
     except Exception as e:
-        logger.error(f"An unexpected error occurred with Gemini API: {e}")
+        logger.error(f"An unexpected error occurred with Gemini API for PR #{pr_number}", exception=e)
         return None
