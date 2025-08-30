@@ -16,8 +16,9 @@ class Settings(BaseSettings):
     POOL_ACQUIRE_TIMEOUT: float = 10.0
 
     # === [URL of Core API] ===
-    API_URL: str = ""
-    
+    API_SERVICE_URL: str = ""
+    INGESTION_SERVICE_URL: str = ""
+
     # === [Gemini models] ===
     PRIMARY_MODEL: str = "gemini-2.5-flash" # "gemini-2.5-flash-preview-04-17" 
     FALLBACK_MODEL: str = "gemini-1.5-flash"
@@ -28,7 +29,6 @@ class Settings(BaseSettings):
     # === [AI] ===
     MODEL_TEMP: float = 0.5
     TOKEN_LIMIT: int = 4096
-
 
     # === [Gunicorn server settings] ===
     HOST: str = "0.0.0.0"

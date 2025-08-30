@@ -1,0 +1,4 @@
+__venv__/
+.env
+*.env
+*.env.*
