@@ -1,52 +1,27 @@
-from pydantic_settings import BaseSettings
-from pydantic import Field
-from typing import List
+# api_service/app/data/configs/app_settings.py
 
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Base settings
-class Settings(BaseSettings):
+class AppSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
-    GEMINI_API_KEY: str
-
-    # === [Database] ===
-    DATABASE_URL: str 
-
-    POOL_MIN_SIZE: int = 2      
-    POOL_MAX_SIZE: int = 15
-    POOL_ACQUIRE_TIMEOUT: float = 10.0
-
-    # === [URL of Core API] ===
-    API_SERVICE_URL: str = ""
-    INGESTION_SERVICE_URL: str = ""
-
-    # === [Gemini models] ===
-    PRIMARY_MODEL: str = "gemini-2.5-flash" # "gemini-2.5-flash-preview-04-17" 
-    FALLBACK_MODEL: str = "gemini-1.5-flash"
-    
-    # === [System prompt paths] ===
-    CORE_SYSTEM_PROMPT_PATH: str = "app/data/prompts/get_insight.txt"
-
-    # === [AI] ===
-    MODEL_TEMP: float = 0.5
-    TOKEN_LIMIT: int = 4096
-
-    # === [Gunicorn server settings] ===
+    # App
+    DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    WORKERS: int = 1
+    WORKERS: int = 2
     WORKER_CONNECTIONS: int = 1000
-    GUNICORN_TIMEOUT: int = 360 
-    KEEP_ALIVE: int = 15
-    GRACEFUL_TIMEOUT: int = 30
-    
-    LOG_LEVEL: str = "info"
+    GUNICORN_TIMEOUT: int = 120
+    KEEP_ALIVE: int = 5
+    GRACEFUL_TIMEOUT: int = 120
 
-    # === [Dev mode] ===
-    DEBUG: bool = False
+    # Database
+    DATABASE_URL: str
+    POOL_MIN_SIZE: int = 2
+    POOL_MAX_SIZE: int = 10
+    POOL_ACQUIRE_TIMEOUT: int = 30
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
-    
-settings = Settings()
+    # Services
+    GEMINI_API_KEY: str
 
+settings = AppSettings()
