@@ -3,7 +3,7 @@ import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from contextlib import asynccontextmanager
 from loguru import logger
-from app.routes.api import router as api_router
+from app.routes import api
 from app.data.configs.logging_configs import setup_logging
 from app.data.database.core_db import connect as db_connect, disconnect as db_disconnect
 from app.services.websocket_manager import websocket_manager
@@ -43,7 +43,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-app.include_router(api_router)
+app.include_router(api.router)
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
