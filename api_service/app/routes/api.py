@@ -1,51 +1,58 @@
 # api_service/app/routes/api.py
 
+import json # <-- **FIX 1: Import the JSON library**
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 from app.data.database import db_helpers
 
-# Renamed the router to be more generic for all API endpoints
 router = APIRouter(prefix="/api", tags=["Frontend API"])
 
 @router.get("/prs")
 async def get_all_pull_requests():
     """
     Endpoint 1: Fetches the initial state for the main dashboard.
-    Combines data from all tables to match the Flutter app's needs.
+    (FIXED to correctly parse JSON from the database).
     """
     logger.info("Fetching initial state for all pull requests...")
     try:
-        # This single, efficient query builds the entire initial state for the dashboard
         query = """
             SELECT
-                pr.pr_number, pr.title, pr.description, pr.author, pr.author_avatar,
-                pr.commit_sha, pr.repository_name, pr.created_at, pr.updated_at,
-                pr.branch_name, pr.files_changed, pr.additions, pr.deletions, pr.is_draft,
-                -- Combine all pipeline statuses into a single status object
-                json_build_object(
-                    'pr', COALESCE(p.status_pr, 'pending'),
-                    'build', COALESCE(p.status_build, 'pending'),
-                    'approval', COALESCE(p.status_approval, 'pending'),
-                    'merge', COALESCE(p.status_merge, 'pending')
-                ) AS status,
-                -- Get the latest AI insight for this PR
+                pr.*,
+                -- Pipeline statuses are aggregated into a single JSON object
+                (SELECT to_json(p) FROM pipeline_runs p WHERE p.pr_number = pr.pr_number) AS pipeline_status,
+                -- The latest AI insight is selected as a single JSON object
                 (SELECT to_json(i) FROM insights i
                  WHERE i.pr_number = pr.pr_number
-                 ORDER BY i.created_at DESC LIMIT 1) AS "ai_insight"
+                 ORDER BY i.created_at DESC LIMIT 1) AS ai_insight
             FROM pull_requests_view pr
-            LEFT JOIN pipeline_runs p ON pr.pr_number = p.pr_number
             ORDER BY pr.updated_at DESC;
         """
         pool = await db_helpers.get_pool()
         async with pool.acquire() as connection:
             rows = await connection.fetch(query)
-        
-        # Format the data exactly as the Flutter models expect
+
         response_data = []
         for row in rows:
             pr_data = dict(row)
-            # The query already structures most of it, we just need to assemble
-            # into the final list of PR objects
+
+            # --- FIX 2: Parse the JSON strings into Python dictionaries ---
+            # Handle cases where a PR might not have a pipeline run or insight yet
+            pipeline_status = json.loads(pr_data['pipeline_status']) if pr_data['pipeline_status'] else {}
+            ai_insight = json.loads(pr_data['ai_insight']) if pr_data['ai_insight'] else None
+
+            # --- FIX 3: Determine a single, representative status for the Flutter model ---
+            # This logic can be adjusted to match your exact UI needs
+            status_name = "pending"
+            if pipeline_status.get('status_merge') in ['merged', 'closed']:
+                status_name = pipeline_status['status_merge']
+            elif pipeline_status.get('status_build') in ['build_passed', 'build_failed']:
+                status_name = pipeline_status['status_build']
+            elif pipeline_status.get('status_build') == 'building':
+                status_name = 'building'
+            elif pipeline_status.get('status_pr') == 'created':
+                 status_name = 'pending' # Or 'opened' if you have that enum
+
+            # Assemble the final JSON object in the exact format Flutter expects
             response_data.append({
                 "number": pr_data['pr_number'],
                 "title": pr_data['title'],
@@ -56,23 +63,24 @@ async def get_all_pull_requests():
                 "repositoryName": pr_data['repository_name'],
                 "createdAt": pr_data['created_at'].isoformat(),
                 "updatedAt": pr_data['updated_at'].isoformat(),
-                "status": pr_data['status']['pr'], # A simplified main status
-                "filesChanged": pr_data['files_changed'],
+                "status": status_name,
+                "filesChanged": pr_data.get('files_changed', []), # Use .get for safety
                 "additions": pr_data['additions'],
                 "deletions": pr_data['deletions'],
                 "branchName": pr_data['branch_name'],
                 "isDraft": pr_data['is_draft'],
-                # We can embed the insight and full status directly if needed
-                # "fullStatus": pr_data['status'],
-                # "aiInsight": pr_data['ai_insight']
+                # You can now pass the full objects if your Flutter model needs them
+                # "fullPipelineStatus": pipeline_status,
+                # "latestAiInsight": ai_insight
             })
 
-        logger.success(f"Successfully fetched {len(response_data)} PRs for dashboard.")
+        logger.success(f"Successfully fetched and formatted {len(response_data)} PRs.")
         return response_data
 
     except Exception as e:
+        # The new log line will give a full traceback for easier debugging
         logger.error("Failed to fetch dashboard data", exception=e)
-        raise HTTPException(status_code=500, detail="Database error occurred.")
+        raise HTTPException(status_code=500, detail="An internal error occurred while fetching dashboard data.")
 
 
 @router.get("/insights/{pr_number}")
@@ -89,20 +97,20 @@ async def get_insights_for_pr(pr_number: int):
             desc=True
         )
         if not insights:
-            raise HTTPException(status_code=404, detail=f"No insights found for PR #{pr_number}")
+            # It's better to return an empty list than a 404 if the PR exists but has no insights
+            return []
         
-        # Format to match AIInsight.fromJson factory
         return [
             {
                 "id": insight['id'],
                 "prNumber": insight['pr_number'],
                 "commitSha": insight['commit_sha'],
-                "riskLevel": insight['risk_level'],
+                "riskLevel": insight['risk_level'].lower(), # Ensure enum compatibility
                 "summary": insight['summary'],
                 "recommendation": insight['recommendation'],
                 "createdAt": insight['created_at'].isoformat(),
-                "keyChanges": [], # You can add this to your prompt/DB if needed
-                "confidenceScore": 0.0 # You can add this to your prompt/DB if needed
+                "keyChanges": [], # Placeholder
+                "confidenceScore": 0.0 # Placeholder
             } for insight in insights
         ]
     except db_helpers.DatabaseError as e:
@@ -113,19 +121,18 @@ async def get_insights_for_pr(pr_number: int):
 @router.get("/repository")
 async def get_repository_info():
     """
-    Endpoint 3: Provides static, hardcoded repository information for the demo.
+    Endpoint 3: Provides static repository information for the demo.
     """
     logger.info("Fetching hardcoded repository information.")
-    # In a real app, this data would be fetched from the DB or GitHub API
     return {
         "name": "FlowLens-Demo",
         "fullName": "DevByZero/FlowLens-Demo",
         "description": "AI-Powered DevOps Workflow Visualizer",
         "owner": "DevByZero",
-        "ownerAvatar": "https://avatars.githubusercontent.com/u/your-org-id",
+        "ownerAvatar": "https://avatars.githubusercontent.com/u/1",
         "isPrivate": True,
         "defaultBranch": "main",
-        "openPRs": 1, # You could make this a live query for extra points
+        "openPRs": 1,
         "totalPRs": 10,
         "lastActivity": "2025-08-30T10:00:00Z",
         "languages": ["Dart", "Python", "Node.js"],
