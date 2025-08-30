@@ -1,11 +1,11 @@
 {
-    "name": "flutter_app",
-    "short_name": "flutter_app",
+    "name": "FlowLens",
+    "short_name": "FlowLens",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#8B7355",
+    "theme_color": "#8B7355",
+    "description": "FlowLens - AI-Powered DevOps Dashboard",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -10,11 +10,11 @@ import 'screens/minimalist_dashboard.dart';
 import 'screens/pr_details_screen.dart';
 
 void main() {
-  runApp(const MissionControlApp());
+  runApp(const FlowLensApp());
 }
 
-class MissionControlApp extends StatelessWidget {
-  const MissionControlApp({super.key});
+class FlowLensApp extends StatelessWidget {
+  const FlowLensApp({super.key});
 
   @override
   Widget build(BuildContext context) {

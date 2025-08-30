@@ -69,7 +69,7 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
                 child: Column(
                   children: [
                     const Spacer(),
-                    
+
                     // Header Section
                     FadeTransition(
                       opacity: _contentAnimation,
@@ -84,7 +84,9 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
                               borderRadius: BorderRadius.circular(25),
                               boxShadow: [
                                 BoxShadow(
-                                  color: AppTheme.primaryColor.withValues(alpha: 0.15),
+                                  color: AppTheme.primaryColor.withValues(
+                                    alpha: 0.15,
+                                  ),
                                   blurRadius: 24,
                                   offset: const Offset(0, 8),
                                 ),
@@ -96,17 +98,17 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
                               color: AppTheme.primaryColor,
                             ),
                           ),
-                          
+
                           const SizedBox(height: 32),
-                          
+
                           Text(
                             'Connect to GitHub',
                             style: AppTheme.premiumHeadingStyle,
                             textAlign: TextAlign.center,
                           ),
-                          
+
                           const SizedBox(height: 16),
-                          
+
                           Text(
                             'Access your repositories and enable\nreal-time DevOps insights',
                             style: AppTheme.premiumSubheadingStyle,
@@ -188,10 +190,10 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                gitHubProvider.errorMessage ?? 'Connection failed',
-                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: AppTheme.errorColor,
-                                ),
+                                gitHubProvider.errorMessage ??
+                                    'Connection failed',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(color: AppTheme.errorColor),
                               ),
                             ),
                           ],
@@ -233,11 +235,7 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
             color: AppTheme.primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(
-            icon,
-            color: AppTheme.primaryColor,
-            size: 24,
-          ),
+          child: Icon(icon, color: AppTheme.primaryColor, size: 24),
         ),
         const SizedBox(width: 16),
         Expanded(
@@ -281,9 +279,7 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
         foregroundColor: Colors.white,
         elevation: 12,
         shadowColor: AppTheme.primaryColor.withValues(alpha: 0.3),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
     );
   }
@@ -321,7 +317,7 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
 
   void _handleConnect(BuildContext context, GitHubProvider provider) async {
     await provider.connectToGitHub();
-    
+
     if (provider.isConnected && mounted) {
       if (context.mounted) {
         Navigator.pushReplacementNamed(context, '/dashboard');

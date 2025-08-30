@@ -7,12 +7,12 @@
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:mission_control/main.dart';
+import 'package:flowlens/main.dart';
 
 void main() {
   testWidgets('FlowLens smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const MissionControlApp());
+    await tester.pumpWidget(const FlowLensApp());
 
     // Verify that splash screen loads
     expect(find.text('FlowLens'), findsOneWidget);
