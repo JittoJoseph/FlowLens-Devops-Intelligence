@@ -96,9 +96,14 @@ The API service operates on a **resilient polling mechanism**, decoupling it fro
     GEMINI_API_KEY="your_google_gemini_api_key_here"
     ```
 5.  **Run the service:**
-    ```bash
-    uvicorn app.main:app --reload
-    ```
+    > `for single worker environment` 
+    > ```bash
+    >uvicorn app.main:app --reload
+    >```
+    > `For multiple workers using gunicorn`
+    >```bash
+    >python -m server_runner
+    >```
     The API will be available at `http://localhost:8000`.
 
 ---
