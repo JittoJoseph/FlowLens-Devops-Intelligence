@@ -48,7 +48,7 @@ async function ensureSchemaExists() {
       );
     }
 
-    const schemaPath = path.join(__dirname, "..", "schema.sql");
+    const schemaPath = path.join(__dirname, "schema.sql");
     const schemaSql = fs.readFileSync(schemaPath, "utf8");
 
     // Run the schema file. This may contain multiple statements.
