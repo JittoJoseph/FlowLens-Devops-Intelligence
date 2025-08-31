@@ -192,7 +192,7 @@ app.get("/", (req, res) => {
       events: "/events (GET)",
       "pull-requests": "/pull-requests (GET)",
       "pipeline-runs": "/pipeline-runs (GET)",
-      "db-status": "/db-status (GET)"
+      "db-status": "/db-status (GET)",
     },
   });
 });
@@ -311,20 +311,20 @@ app.get("/db-status", async (req, res) => {
       const result = await pool.query(`SELECT COUNT(*) as count FROM ${table}`);
       status[table] = {
         count: parseInt(result.rows[0].count),
-        exists: true
+        exists: true,
       };
     }
 
     res.json({
       database_status: "connected",
       tables: status,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
     console.error("❌ Error checking database status:", error);
     res.status(500).json({
       database_status: "error",
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -400,7 +400,9 @@ async function processEvent(eventType, payload, eventId) {
       eventId,
     ]);
 
-    console.log(`✅ Event ${eventType} (ID: ${eventId}) processed successfully`);
+    console.log(
+      `✅ Event ${eventType} (ID: ${eventId}) processed successfully`
+    );
   } catch (error) {
     console.error(`❌ Error processing ${eventType} event:`, error.message);
     throw error;
@@ -614,7 +616,9 @@ async function processPushEvent(payload, eventId) {
 
 // Database helper functions
 async function upsertPullRequest(prData) {
-  console.log(`💾 Upserting PR #${prData.pr_number}: ${prData.title} (${prData.state})`);
+  console.log(
+    `💾 Upserting PR #${prData.pr_number}: ${prData.title} (${prData.state})`
+  );
 
   const query = `
     INSERT INTO pull_requests (
@@ -688,13 +692,18 @@ async function upsertPullRequest(prData) {
       console.error(`❌ Failed to append PR history:`, err.message);
     }
   } catch (error) {
-    console.error(`❌ Failed to upsert PR #${prData.pr_number}:`, error.message);
+    console.error(
+      `❌ Failed to upsert PR #${prData.pr_number}:`,
+      error.message
+    );
     throw error;
   }
 }
 
 async function upsertPipelineRun(prNumber, data) {
-  console.log(`💾 Upserting pipeline run for PR #${prNumber} (commit: ${data.commit_sha})`);
+  console.log(
+    `💾 Upserting pipeline run for PR #${prNumber} (commit: ${data.commit_sha})`
+  );
 
   const query = `
     INSERT INTO pipeline_runs (
@@ -723,7 +732,10 @@ async function upsertPipelineRun(prNumber, data) {
       await updatePipelineStatus(prNumber, "status_pr", data.status_pr);
     }
   } catch (error) {
-    console.error(`❌ Failed to upsert pipeline run for PR #${prNumber}:`, error.message);
+    console.error(
+      `❌ Failed to upsert pipeline run for PR #${prNumber}:`,
+      error.message
+    );
     throw error;
   }
 }
@@ -752,7 +764,10 @@ async function updatePipelineStatus(prNumber, statusField, statusValue) {
     await pool.query(query, [statusValue, historyEntry, prNumber]);
     console.log(`✅ PR #${prNumber} ${statusField} updated to: ${statusValue}`);
   } catch (error) {
-    console.error(`❌ Failed to update PR #${prNumber} ${statusField}:`, error.message);
+    console.error(
+      `❌ Failed to update PR #${prNumber} ${statusField}:`,
+      error.message
+    );
     throw error;
   }
 }
