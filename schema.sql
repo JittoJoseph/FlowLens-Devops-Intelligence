@@ -76,6 +76,7 @@ CREATE INDEX idx_pipeline_runs_pr ON pipeline_runs (pr_number);
 CREATE TABLE pull_requests (
     pr_number INT PRIMARY KEY,
     title TEXT NOT NULL,
+    description TEXT,                                    -- PR body/description from GitHub
     author TEXT NOT NULL,
     author_avatar TEXT,
     commit_sha TEXT NOT NULL,
