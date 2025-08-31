@@ -89,7 +89,7 @@ The API service operates on a **resilient polling mechanism**, decoupling it fro
     Now, edit `.env`:
     ```env
     # .env
-    DEBUG=True
+    DEBUG=True # for production, set it as False 
     HOST="0.0.0.0"
     PORT=8000
     DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require"
@@ -98,7 +98,7 @@ The API service operates on a **resilient polling mechanism**, decoupling it fro
 5.  **Run the service:**
     > `for single worker environment` 
     > ```bash
-    >uvicorn app.main:app --reload
+    >uvicorn app.main:app --reload # for production, remove --reload flag
     >```
     > `For multiple workers using gunicorn`
     >```bash
