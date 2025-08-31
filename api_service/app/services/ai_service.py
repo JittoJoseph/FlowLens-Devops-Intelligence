@@ -65,10 +65,28 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
             contents=[{"role": "user", "parts": [{"text": prompt}]}],
             config=generation_config,
         )
-
+        # --- FIX 1: DEFENSIVE CHECK ---
+        # Check if the response or its text is empty before proceeding.
+        if not response or not response.text:
+            logger.warning(f"Gemini returned an empty response for PR #{pr_number}.")
+            return None
+        
         cleaned_response = _clean_json_response(response.text)
-        insight_json = json.loads(cleaned_response)
-
+        
+        # --- FIX 2: ISOLATED JSON PARSING ---
+        try:
+            insight_json = json.loads(cleaned_response)
+            logger.success(f"Successfully generated and parsed AI insight for PR #{pr_number}")
+            return insight_json
+        except json.JSONDecodeError as e:
+            # --- FIX 3: SAFE LOGGING ---
+            # We log the problematic string as extra data, not in the main message.
+            # This prevents the logger itself from crashing.
+            logger.error(
+                f"Failed to decode JSON from Gemini response for PR #{pr_number}",
+                response_text=cleaned_response,
+                exception=e
+            )
         logger.success(f"Successfully generated AI insight for PR #{pr_number}")
         return insight_json
 

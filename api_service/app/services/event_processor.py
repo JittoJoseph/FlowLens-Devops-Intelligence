@@ -62,12 +62,15 @@ async def process_event_by_id(event_id: str):
             logger.warning(f"Event {event_id} (type: {event_type}) is not associated with a PR. Skipping.")
             return
 
-        # --- Step 2: Generate AI Insight if it's a code change event ---
+        # --- FIX: HANDLE POTENTIAL AI FAILURE GRACEFULLY ---
         if event_type == 'pull_request' and payload.get('action') in ['opened', 'reopened', 'synchronize']:
             pr_view_data = await db_helpers.select_one("pull_requests_view", where={"pr_number": pr_number})
             if pr_view_data:
+                # This can now return None, and we must handle it.
                 ai_insight_json = await ai_service.get_ai_insights(pr_view_data)
+                
                 if ai_insight_json:
+                    # This block only runs if the AI call was successful.
                     insight_record = {
                         "pr_number": pr_number,
                         "commit_sha": pr_view_data.get("commit_sha"),
@@ -77,8 +80,10 @@ async def process_event_by_id(event_id: str):
                     }
                     await db_helpers.insert("insights", insight_record)
                     logger.success(f"Generated and saved new AI insight for PR #{pr_number}")
+                else:
+                    logger.warning(f"AI insight generation failed for PR #{pr_number}. Proceeding without insight.")
 
-        # --- Step 3: Broadcast the new, complete state of the PR to all clients ---
+        # This broadcast now happens REGARDLESS of AI success, so the UI always updates.
         latest_state = await _get_latest_pr_state(pr_number)
         if latest_state:
             await websocket_manager.broadcast_json({
@@ -88,7 +93,6 @@ async def process_event_by_id(event_id: str):
             logger.success(f"Broadcasted latest state for PR #{pr_number} to all clients.")
 
     except Exception as e:
-        logger.error(f"Failed during processing of event {event_id}", exception=e)
-        # We re-raise the exception so the poller knows it failed and doesn't mark it as processed.
-        # This ensures the event will be retried on the next cycle.
+        logger.error(f"CRITICAL failure during processing of event {event_id}", exception=e)
+        # We re-raise so the poller knows it failed and retries.
         raise e
