@@ -1,3 +1,5 @@
+# api_service/app/data/database/core_db.py
+
 import asyncio
 from typing import Optional
 from loguru import logger
@@ -6,37 +8,25 @@ import asyncpg
 from app.data.configs.app_settings import settings
 
 # --- Configuration ---
-# These settings control the connection pool from your app to the PgBouncer.
-# This pool size is per-process (i.e., per FastAPI worker).
-POOL_MIN_SIZE = settings.POOL_MIN_SIZE          # Keep a couple of connections warm to the pooler for low latency.
-POOL_MAX_SIZE = settings.POOL_MAX_SIZE         # Max concurrent DB queries from this worker. A safe start for 2vCPU.
-POOL_ACQUIRE_TIMEOUT = settings.POOL_ACQUIRE_TIMEOUT # How long a request will wait for a connection from this pool.
+POOL_MIN_SIZE = settings.POOL_MIN_SIZE
+POOL_MAX_SIZE = settings.POOL_MAX_SIZE
+POOL_ACQUIRE_TIMEOUT = settings.POOL_ACQUIRE_TIMEOUT
 
 # --- Database State ---
 pool: Optional[asyncpg.Pool] = None
+listener_connection: Optional[asyncpg.Connection] = None # <-- NEW: For our dedicated listener
 _pool_lock = asyncio.Lock()
 
 async def get_pool() -> asyncpg.Pool:
-    """
-    Returns the connection pool, creating it if it doesn't exist.
-    This is the primary function to be used by DB helper functions.
-    It's safe to call this concurrently from multiple coroutines.
-    """
+    """Returns the connection pool for handling API requests."""
     global pool
-    # Fast path: if the pool is already created, return it immediately.
     if pool:
         return pool
     
-    # If the pool needs to be created, acquire a lock to prevent multiple
-    # coroutines from creating it at the same time.
     async with _pool_lock:
-        # Double-check that the pool wasn't created by another coroutine
-        # while we were waiting for the lock.
         if pool is None:
             logger.info("Creating database connection pool...")
             try:
-                # This creates a pool of persistent connections to your NeonDB pooler.
-                # It is highly efficient and avoids the overhead of reconnecting.
                 pool = await asyncpg.create_pool(
                     dsn=settings.DATABASE_URL,
                     min_size=POOL_MIN_SIZE,
@@ -46,19 +36,39 @@ async def get_pool() -> asyncpg.Pool:
                 logger.success("Database connection pool created successfully.")
             except Exception as e:
                 logger.critical("Could not create database pool", error=str(e))
-                # This is a critical failure; the application cannot run without a database.
                 raise
     return pool
 
+# --- NEW FUNCTION FOR THE LISTENER ---
+async def create_dedicated_connection() -> asyncpg.Connection:
+    """Creates a single, dedicated connection for long-lived tasks like LISTEN."""
+    global listener_connection
+    if listener_connection and not listener_connection.is_closed():
+        return listener_connection
+    
+    logger.info("Creating dedicated database connection for listener...")
+    try:
+        listener_connection = await asyncpg.connect(dsn=settings.DATABASE_URL)
+        logger.success("Dedicated listener connection created successfully.")
+        return listener_connection
+    except Exception as e:
+        logger.critical("Could not create dedicated listener connection", error=str(e))
+        raise
+
 async def connect():
-    """Call from FastAPI startup to eagerly initialize the database pool."""
+    """Initializes the main pool on startup."""
     await get_pool()
 
 async def disconnect():
-    """Call from FastAPI shutdown to gracefully close all connections in the pool."""
-    global pool
+    """Closes all connections on shutdown."""
+    global pool, listener_connection
     if pool:
         logger.info("Closing database connection pool...")
         await pool.close()
         pool = None
         logger.success("Database connection pool closed.")
+    if listener_connection and not listener_connection.is_closed():
+        logger.info("Closing dedicated listener connection...")
+        await listener_connection.close()
+        listener_connection = None
+        logger.success("Dedicated listener connection closed.")

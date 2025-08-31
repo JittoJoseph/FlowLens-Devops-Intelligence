@@ -9,7 +9,7 @@ class AppSettings(BaseSettings):
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    WORKERS: int = 2
+    WORKERS: int = 1
     WORKER_CONNECTIONS: int = 1000
     GUNICORN_TIMEOUT: int = 120
     KEEP_ALIVE: int = 5
