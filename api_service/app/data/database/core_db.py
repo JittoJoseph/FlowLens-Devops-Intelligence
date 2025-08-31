@@ -3,7 +3,6 @@
 import asyncio
 from typing import Optional
 from loguru import logger
-
 import asyncpg
 from app.data.configs.app_settings import settings
 
@@ -14,7 +13,6 @@ POOL_ACQUIRE_TIMEOUT = settings.POOL_ACQUIRE_TIMEOUT
 
 # --- Database State ---
 pool: Optional[asyncpg.Pool] = None
-listener_connection: Optional[asyncpg.Connection] = None # <-- NEW: For our dedicated listener
 _pool_lock = asyncio.Lock()
 
 async def get_pool() -> asyncpg.Pool:
@@ -39,36 +37,15 @@ async def get_pool() -> asyncpg.Pool:
                 raise
     return pool
 
-# --- NEW FUNCTION FOR THE LISTENER ---
-async def create_dedicated_connection() -> asyncpg.Connection:
-    """Creates a single, dedicated connection for long-lived tasks like LISTEN."""
-    global listener_connection
-    if listener_connection and not listener_connection.is_closed():
-        return listener_connection
-    
-    logger.info("Creating dedicated database connection for listener...")
-    try:
-        listener_connection = await asyncpg.connect(dsn=settings.DATABASE_URL)
-        logger.success("Dedicated listener connection created successfully.")
-        return listener_connection
-    except Exception as e:
-        logger.critical("Could not create dedicated listener connection", error=str(e))
-        raise
-
 async def connect():
     """Initializes the main pool on startup."""
     await get_pool()
 
 async def disconnect():
-    """Closes all connections on shutdown."""
-    global pool, listener_connection
+    """Closes all connections in the pool on shutdown."""
+    global pool
     if pool:
         logger.info("Closing database connection pool...")
         await pool.close()
         pool = None
         logger.success("Database connection pool closed.")
-    if listener_connection and not listener_connection.is_closed():
-        logger.info("Closing dedicated listener connection...")
-        await listener_connection.close()
-        listener_connection = None
-        logger.success("Dedicated listener connection closed.")
