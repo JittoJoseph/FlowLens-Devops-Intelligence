@@ -140,3 +140,29 @@ VALUES (
     'pending',
     'pending'
 ) ON CONFLICT (pr_number) DO NOTHING;
+
+
+-- ================================
+-- Section 5: Real-time Notification Trigger (LISTEN/NOTIFY)
+-- This is the core of our event-driven, no-polling architecture.
+-- ================================
+
+-- 1. Create a function that will be triggered on new row insertion.
+CREATE OR REPLACE FUNCTION notify_new_raw_event()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- NEW.id is the UUID of the newly inserted row.
+  -- We send it as the payload of the notification on the 'new_event' channel.
+  PERFORM pg_notify('new_event', NEW.id::text);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 2. Create a trigger that executes the function after every INSERT on raw_events.
+CREATE TRIGGER raw_events_insert_trigger
+AFTER INSERT ON raw_events
+FOR EACH ROW
+EXECUTE FUNCTION notify_new_raw_event();
+
+COMMENT ON FUNCTION notify_new_raw_event IS 'Sends a notification on the new_event channel with the event UUID as payload.';
+COMMENT ON TRIGGER raw_events_insert_trigger ON raw_events IS 'Fires after a new event is inserted to notify the API service.';
