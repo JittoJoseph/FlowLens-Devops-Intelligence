@@ -927,13 +927,14 @@ async function updatePipelineStatus(
     const currentStatusQuery = `SELECT ${statusField} FROM pipeline_runs WHERE pr_number = $1`;
     const currentResult = await pool.query(currentStatusQuery, [prNumber]);
 
+    let currentStatus = null;
     if (currentResult.rows.length > 0) {
-      const currentStatus = currentResult.rows[0][statusField];
+      currentStatus = currentResult.rows[0][statusField];
+    }
 
-      // If status hasn't changed, don't update
-      if (currentStatus === statusValue) {
-        return; // No change needed
-      }
+    // If status hasn't changed, don't update
+    if (currentStatus === statusValue) {
+      return; // No change needed, skip everything
     }
 
     const timestamp = new Date().toISOString();
