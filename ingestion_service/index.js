@@ -10,13 +10,23 @@ const { Pool } = require("pg");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Database configuration
+// Database configuration (minimal): decode YB_CA_B64 and use it; fall back to permissive SSL only in production
+let sslConfig = false;
+if (process.env.NODE_ENV === "production") {
+  if (process.env.YB_CA_B64) {
+    const ca = Buffer.from(process.env.YB_CA_B64, "base64").toString("utf8");
+    sslConfig = { ca, rejectUnauthorized: true };
+    console.log("🔐 Using Yugabyte CA from YB_CA_B64");
+  } else {
+    // permissive for demo convenience (insecure for production)
+    sslConfig = { rejectUnauthorized: false };
+    console.warn("⚠️ No YB_CA_B64 provided — using permissive SSL (INSECURE)");
+  }
+}
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl:
-    process.env.NODE_ENV === "production"
-      ? { rejectUnauthorized: false }
-      : false,
+  ssl: sslConfig,
 });
 
 // Ensure database schema exists: if any required table is missing, apply schema.sql
