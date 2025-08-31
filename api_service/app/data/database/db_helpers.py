@@ -28,9 +28,13 @@ async def select(
     select_fields: str = "*",
     order_by: Optional[str] = None,
     desc: bool = False,
-    limit: Optional[int] = None
+    limit: Optional[int] = None,
+    retry_on_connection_error: bool = True
 ) -> List[Dict[str, Any]]:
-    """Returns a list of rows (as dicts) with logging and error handling."""
+    """
+    Returns a list of rows (as dicts) with logging and error handling.
+    Includes a retry mechanism for connection errors.
+    """
     pool = await get_pool()
     table_quoted = quote_table(table)
     
@@ -58,6 +62,13 @@ async def select(
             rows: List[asyncpg.Record] = await connection.fetch(query, *values)
         return [dict(row) for row in rows]
     except asyncpg.PostgresError as e:
+        # Specific check for connection errors
+        if "connection is closed" in str(e) or "connection was closed" in str(e):
+            if retry_on_connection_error:
+                logger.warning(f"Connection error for table '{table}', retrying once. Error: {e}")
+                # Retry the operation once
+                return await select(table, where, select_fields, order_by, desc, limit, retry_on_connection_error=False)
+        
         logger.error(f"Database SELECT failed for table '{table}'. Query: {query}, Error: {e}")
         raise DatabaseError(f"Failed to select from {table}: {e}") from e
 
