@@ -1,15 +1,13 @@
 # api_service/app/services/event_processor.py
 
+import json # <-- **FIX 1: Import the JSON library**
 from loguru import logger
 from app.data.database import db_helpers
 from app.services import ai_service
 from app.services.websocket_manager import websocket_manager
 
 async def _get_latest_pr_state(pr_number: int):
-    """
-    Fetches the complete, aggregated state of a single PR.
-    This is used to broadcast the most up-to-date information to Flutter.
-    """
+    """Fetches the complete, aggregated state of a single PR."""
     query = """
         SELECT
             pr.*,
@@ -23,13 +21,22 @@ async def _get_latest_pr_state(pr_number: int):
     pool = await db_helpers.get_pool()
     async with pool.acquire() as connection:
         row = await connection.fetchrow(query, pr_number)
-    return dict(row) if row else None
+    
+    if not row: return None
+    
+    # Ensure nested JSON is also parsed correctly before sending
+    state = dict(row)
+    if state.get('pipeline_status'):
+        state['pipeline_status'] = json.loads(state['pipeline_status'])
+    if state.get('ai_insight'):
+        state['ai_insight'] = json.loads(state['ai_insight'])
+    return state
 
 
 async def process_event_by_id(event_id: str):
     """
-    The main processor function, triggered by a database notification.
-    It enriches the data with AI insights if necessary and broadcasts the latest state.
+    The main processor function, triggered by the poller.
+    (FIXED to correctly parse the JSON payload).
     """
     logger.info(f"Processing event with ID: {event_id}")
     try:
@@ -38,24 +45,24 @@ async def process_event_by_id(event_id: str):
             logger.error(f"Event {event_id} not found in database.")
             return
 
-        payload = event.get('payload', {})
+        # --- FIX 2: Parse the payload string into a Python dictionary ---
+        payload = json.loads(event.get('payload', '{}'))
         event_type = event.get('event_type')
         pr_number = None
 
         # --- Step 1: Identify the associated Pull Request ---
         if 'pull_request' in payload:
-            pr_number = payload['pull_request']['number']
+            pr_number = payload['pull_request'].get('number')
         elif 'workflow_run' in payload and payload['workflow_run'].get('pull_requests'):
-            pr_number = payload['workflow_run']['pull_requests'][0]['number']
+            pr_number = payload['workflow_run']['pull_requests'][0].get('number')
         elif 'check_run' in payload and payload['check_run'].get('pull_requests'):
-            pr_number = payload['check_run']['pull_requests'][0]['number']
+            pr_number = payload['check_run']['pull_requests'][0].get('number')
 
         if not pr_number:
             logger.warning(f"Event {event_id} (type: {event_type}) is not associated with a PR. Skipping.")
             return
 
         # --- Step 2: Generate AI Insight if it's a code change event ---
-        # The ingestion service has already created the PR view, so we can read from it.
         if event_type == 'pull_request' and payload.get('action') in ['opened', 'reopened', 'synchronize']:
             pr_view_data = await db_helpers.select_one("pull_requests_view", where={"pr_number": pr_number})
             if pr_view_data:
@@ -67,13 +74,11 @@ async def process_event_by_id(event_id: str):
                         "risk_level": ai_insight_json.get("riskLevel"),
                         "summary": ai_insight_json.get("summary"),
                         "recommendation": ai_insight_json.get("recommendation"),
-                        # You can add author/avatar from pr_view_data if needed
                     }
                     await db_helpers.insert("insights", insight_record)
                     logger.success(f"Generated and saved new AI insight for PR #{pr_number}")
 
         # --- Step 3: Broadcast the new, complete state of the PR to all clients ---
-        # This ensures the UI updates for ANY change (status, new insight, etc.)
         latest_state = await _get_latest_pr_state(pr_number)
         if latest_state:
             await websocket_manager.broadcast_json({
@@ -84,3 +89,6 @@ async def process_event_by_id(event_id: str):
 
     except Exception as e:
         logger.error(f"Failed during processing of event {event_id}", exception=e)
+        # We re-raise the exception so the poller knows it failed and doesn't mark it as processed.
+        # This ensures the event will be retried on the next cycle.
+        raise e

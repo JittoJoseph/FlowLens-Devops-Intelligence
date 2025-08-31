@@ -8,23 +8,16 @@ from app.services.event_processor import process_event_by_id
 _running = True
 
 def stop_poller():
-    """Signals the polling loop to stop."""
     global _running
     _running = False
 
 async def poll_for_events():
-    """
-    The background task that polls the database for new, unprocessed events.
-    """
     logger.info("Starting database event poller...")
     
     while _running:
         try:
-            # --- THIS IS THE CORE POLLING LOGIC ---
             events_to_process = await db_helpers.select(
-                "raw_events",
-                where={"processed": False},
-                order_by="received_at" # Process oldest first
+                "raw_events", where={"processed": False}, order_by="received_at"
             )
 
             if events_to_process:
@@ -32,21 +25,20 @@ async def poll_for_events():
                 for event in events_to_process:
                     event_id = event['id']
                     try:
-                        # Process the event using the existing logic
                         await process_event_by_id(event_id)
                         
-                        # --- CRITICAL STEP: Mark the event as processed ---
+                        # --- THIS ONLY RUNS ON SUCCESS ---
                         await db_helpers.update(
-                            "raw_events",
-                            data={"processed": True},
-                            where={"id": event_id}
+                            "raw_events", data={"processed": True}, where={"id": event_id}
                         )
                         logger.info(f"Successfully marked event {event_id} as processed.")
 
                     except Exception as e:
-                        logger.error(f"Failed to process event {event_id}, it will be retried.", exception=e)
+                        # --- The processor now re-raises the exception on failure ---
+                        # So we log it here, and the event is NOT marked as processed.
+                        # It will be retried on the next poll cycle.
+                        logger.error(f"Failed to process event {event_id}, it will be retried. Error: {e}")
             else:
-                # This log is useful to know the poller is alive and running
                 logger.trace("No new events found on this poll cycle.")
 
         except asyncio.CancelledError:
@@ -55,5 +47,4 @@ async def poll_for_events():
         except Exception as e:
             logger.error(f"An error occurred in the event poller loop: {e}")
         
-        # Wait for the next polling interval
         await asyncio.sleep(2)
