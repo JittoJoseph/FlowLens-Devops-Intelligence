@@ -1,0 +1,37 @@
+{
+  "name": "flowlens-ingestion-service",
+  "version": "1.0.0",
+  "description": "GitHub webhook processor for FlowLens AI-powered DevOps workflow visualization",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "docker:build": "docker build -t flowlens-ingestion .",
+    "docker:run": "docker run -p 3000:3000 --env-file .env flowlens-ingestion"
+  },
+  "keywords": [
+    "github",
+    "webhooks",
+    "devops",
+    "ai",
+    "workflow",
+    "visualization",
+    "yugabytedb"
+  ],
+  "author": "FlowLens Team",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "body-parser": "^2.2.0",
+    "express": "^5.1.0",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  }
+}
