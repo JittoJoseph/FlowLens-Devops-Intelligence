@@ -922,32 +922,47 @@ async function updatePipelineStatus(
   meta = null,
   markChanged = null
 ) {
-  const timestamp = new Date().toISOString();
-
-  // Build a richer history entry including optional metadata
-  const historyObj = {
-    field: statusField,
-    value: statusValue,
-    at: timestamp,
-  };
-
-  if (meta && typeof meta === "object") {
-    historyObj.meta = meta;
-  }
-
-  const historyEntry = JSON.stringify(historyObj);
-
-  // Update the specific status field and append to history JSONB
-  const updateQuery = `
-    UPDATE pipeline_runs
-    SET ${statusField} = $1,
-        history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($2::jsonb),
-        updated_at = NOW()
-    WHERE pr_number = $3
-  `;
-
   try {
+    // First, check the current status to avoid duplicate updates
+    const currentStatusQuery = `SELECT ${statusField} FROM pipeline_runs WHERE pr_number = $1`;
+    const currentResult = await pool.query(currentStatusQuery, [prNumber]);
+
+    if (currentResult.rows.length > 0) {
+      const currentStatus = currentResult.rows[0][statusField];
+
+      // If status hasn't changed, don't update
+      if (currentStatus === statusValue) {
+        return; // No change needed
+      }
+    }
+
+    const timestamp = new Date().toISOString();
+
+    // Build a richer history entry including optional metadata
+    const historyObj = {
+      field: statusField,
+      value: statusValue,
+      at: timestamp,
+    };
+
+    if (meta && typeof meta === "object") {
+      historyObj.meta = meta;
+    }
+
+    const historyEntry = JSON.stringify(historyObj);
+
+    // Update the specific status field and append to history JSONB
+    const updateQuery = `
+      UPDATE pipeline_runs
+      SET ${statusField} = $1,
+          history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($2::jsonb),
+          updated_at = NOW()
+      WHERE pr_number = $3
+    `;
+
     await pool.query(updateQuery, [statusValue, historyEntry, prNumber]);
+
+    // Only mark as changed if we actually updated something
     if (markChanged) markChanged();
   } catch (error) {
     console.error(
