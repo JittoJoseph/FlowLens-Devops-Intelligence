@@ -1,6 +1,7 @@
 # api_service/app/services/event_processor.py
 
-import json # <-- **FIX 1: Import the JSON library**
+import json
+from datetime import datetime
 from loguru import logger
 from app.data.database import db_helpers
 from app.services import ai_service
@@ -30,6 +31,14 @@ async def _get_latest_pr_state(pr_number: int):
         state['pipeline_status'] = json.loads(state['pipeline_status'])
     if state.get('ai_insight'):
         state['ai_insight'] = json.loads(state['ai_insight'])
+
+    # --- FIX 2: THE CRITICAL CHANGE ---
+    # Iterate through the entire state dictionary and convert any
+    # datetime objects to JSON-serializable ISO 8601 strings.
+    for key, value in state.items():
+        if isinstance(value, datetime):
+            state[key] = value.isoformat()
+
     return state
 
 
