@@ -190,6 +190,9 @@ app.get("/", (req, res) => {
       health: "/health",
       webhook: "/webhook (POST)",
       events: "/events (GET)",
+      "pull-requests": "/pull-requests (GET)",
+      "pipeline-runs": "/pipeline-runs (GET)",
+      "db-status": "/db-status (GET)"
     },
   });
 });
@@ -260,66 +263,148 @@ app.get("/events", async (req, res) => {
   }
 });
 
+// Get pull requests data
+app.get("/pull-requests", async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+    const result = await pool.query(
+      "SELECT pr_number, title, author, state, commit_sha, repository_name, created_at, updated_at FROM pull_requests ORDER BY updated_at DESC LIMIT $1",
+      [limit]
+    );
+
+    res.json({
+      pull_requests: result.rows,
+      total: result.rows.length,
+    });
+  } catch (error) {
+    console.error("❌ Error fetching pull requests:", error);
+    res.status(500).json({ error: "Failed to fetch pull requests" });
+  }
+});
+
+// Get pipeline runs data
+app.get("/pipeline-runs", async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+    const result = await pool.query(
+      "SELECT pr_number, commit_sha, author, status_pr, status_build, status_approval, status_merge, updated_at FROM pipeline_runs ORDER BY updated_at DESC LIMIT $1",
+      [limit]
+    );
+
+    res.json({
+      pipeline_runs: result.rows,
+      total: result.rows.length,
+    });
+  } catch (error) {
+    console.error("❌ Error fetching pipeline runs:", error);
+    res.status(500).json({ error: "Failed to fetch pipeline runs" });
+  }
+});
+
+// Get database status
+app.get("/db-status", async (req, res) => {
+  try {
+    const tables = ["raw_events", "insights", "pipeline_runs", "pull_requests"];
+    const status = {};
+
+    for (const table of tables) {
+      const result = await pool.query(`SELECT COUNT(*) as count FROM ${table}`);
+      status[table] = {
+        count: parseInt(result.rows[0].count),
+        exists: true
+      };
+    }
+
+    res.json({
+      database_status: "connected",
+      tables: status,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error("❌ Error checking database status:", error);
+    res.status(500).json({
+      database_status: "error",
+      error: error.message
+    });
+  }
+});
+
 // Insert raw event into database
 async function insertRawEvent(eventType, payload, deliveryId) {
+  console.log(`💾 Inserting raw event: ${eventType} (delivery: ${deliveryId})`);
+
   const query = `
     INSERT INTO raw_events (event_type, payload, delivery_id, processed, received_at)
     VALUES ($1, $2, $3, $4, NOW())
     RETURNING id
   `;
 
-  const result = await pool.query(query, [
-    eventType,
-    JSON.stringify(payload),
-    deliveryId,
-    false,
-  ]);
+  try {
+    const result = await pool.query(query, [
+      eventType,
+      JSON.stringify(payload),
+      deliveryId,
+      false,
+    ]);
 
-  return result.rows[0].id;
+    const eventId = result.rows[0].id;
+    console.log(`✅ Raw event inserted successfully with ID: ${eventId}`);
+    return eventId;
+  } catch (error) {
+    console.error(`❌ Failed to insert raw event:`, error.message);
+    throw error;
+  }
 }
 
 // Process events for FlowLens workflow tracking
 async function processEvent(eventType, payload, eventId) {
-  console.log(`🔄 Processing ${eventType} event...`);
+  console.log(`🔄 Processing ${eventType} event (ID: ${eventId})...`);
 
-  switch (eventType) {
-    case "pull_request":
-      await processPullRequestEvent(payload, eventId);
-      break;
+  try {
+    switch (eventType) {
+      case "pull_request":
+        await processPullRequestEvent(payload, eventId);
+        break;
 
-    case "workflow_run":
-      await processWorkflowRunEvent(payload, eventId);
-      break;
+      case "workflow_run":
+        await processWorkflowRunEvent(payload, eventId);
+        break;
 
-    case "check_run":
-      await processCheckRunEvent(payload, eventId);
-      break;
+      case "check_run":
+        await processCheckRunEvent(payload, eventId);
+        break;
 
-    case "check_suite":
-      await processCheckSuiteEvent(payload, eventId);
-      break;
+      case "check_suite":
+        await processCheckSuiteEvent(payload, eventId);
+        break;
 
-    case "pull_request_review":
-      await processPullRequestReviewEvent(payload, eventId);
-      break;
+      case "pull_request_review":
+        await processPullRequestReviewEvent(payload, eventId);
+        break;
 
-    case "push":
-      await processPushEvent(payload, eventId);
-      break;
+      case "push":
+        await processPushEvent(payload, eventId);
+        break;
 
-    case "ping":
-      console.log("🏓 Ping event received - webhook is working!");
-      break;
+      case "ping":
+        console.log("🏓 Ping event received - webhook is working!");
+        break;
 
-    default:
-      console.log(`ℹ️  Event type ${eventType} - stored but not processed`);
+      default:
+        console.log(`ℹ️  Event type ${eventType} - stored but not processed`);
+    }
+
+    // Mark event as processed
+    await pool.query("UPDATE raw_events SET processed = $1 WHERE id = $2", [
+      true,
+      eventId,
+    ]);
+
+    console.log(`✅ Event ${eventType} (ID: ${eventId}) processed successfully`);
+  } catch (error) {
+    console.error(`❌ Error processing ${eventType} event:`, error.message);
+    throw error;
   }
-
-  // Mark event as processed
-  await pool.query("UPDATE raw_events SET processed = $1 WHERE id = $2", [
-    true,
-    eventId,
-  ]);
 }
 
 // Process pull request events
@@ -529,6 +614,8 @@ async function processPushEvent(payload, eventId) {
 
 // Database helper functions
 async function upsertPullRequest(prData) {
+  console.log(`💾 Upserting PR #${prData.pr_number}: ${prData.title} (${prData.state})`);
+
   const query = `
     INSERT INTO pull_requests (
       pr_number, title, description, author, author_avatar, commit_sha,
@@ -556,48 +643,59 @@ async function upsertPullRequest(prData) {
       updated_at = NOW()
   `;
 
-  await pool.query(query, [
-    prData.pr_number,
-    prData.title,
-    prData.description,
-    prData.author,
-    prData.author_avatar,
-    prData.commit_sha,
-    prData.repository_name,
-    prData.branch_name,
-    prData.base_branch,
-    prData.pr_url,
-    JSON.stringify(prData.commit_urls),
-    prData.additions,
-    prData.deletions,
-    prData.changed_files,
-    prData.commits_count,
-    JSON.stringify(prData.labels),
-    JSON.stringify(prData.assignees),
-    JSON.stringify(prData.reviewers),
-    prData.is_draft,
-    prData.state || "open",
-  ]);
-
-  // Append a compact history entry to pull_requests.history
   try {
-    const historyEntry = JSON.stringify({
-      at: new Date().toISOString(),
-      title: prData.title,
-      state: prData.state || "open",
-      commit_sha: prData.commit_sha,
-    });
+    await pool.query(query, [
+      prData.pr_number,
+      prData.title,
+      prData.description,
+      prData.author,
+      prData.author_avatar,
+      prData.commit_sha,
+      prData.repository_name,
+      prData.branch_name,
+      prData.base_branch,
+      prData.pr_url,
+      JSON.stringify(prData.commit_urls),
+      prData.additions,
+      prData.deletions,
+      prData.changed_files,
+      prData.commits_count,
+      JSON.stringify(prData.labels),
+      JSON.stringify(prData.assignees),
+      JSON.stringify(prData.reviewers),
+      prData.is_draft,
+      prData.state || "open",
+    ]);
 
-    await pool.query(
-      `UPDATE pull_requests SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($1::jsonb) WHERE pr_number = $2`,
-      [historyEntry, prData.pr_number]
-    );
-  } catch (err) {
-    console.error("❌ Failed to append PR history:", err.message);
+    console.log(`✅ PR #${prData.pr_number} upserted successfully`);
+
+    // Append a compact history entry to pull_requests.history
+    try {
+      const historyEntry = JSON.stringify({
+        at: new Date().toISOString(),
+        title: prData.title,
+        state: prData.state || "open",
+        commit_sha: prData.commit_sha,
+      });
+
+      await pool.query(
+        `UPDATE pull_requests SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($1::jsonb) WHERE pr_number = $2`,
+        [historyEntry, prData.pr_number]
+      );
+
+      console.log(`📝 PR #${prData.pr_number} history updated`);
+    } catch (err) {
+      console.error(`❌ Failed to append PR history:`, err.message);
+    }
+  } catch (error) {
+    console.error(`❌ Failed to upsert PR #${prData.pr_number}:`, error.message);
+    throw error;
   }
 }
 
 async function upsertPipelineRun(prNumber, data) {
+  console.log(`💾 Upserting pipeline run for PR #${prNumber} (commit: ${data.commit_sha})`);
+
   const query = `
     INSERT INTO pipeline_runs (
       pr_number, commit_sha, author, avatar_url, updated_at
@@ -610,20 +708,29 @@ async function upsertPipelineRun(prNumber, data) {
       updated_at = NOW()
   `;
 
-  await pool.query(query, [
-    prNumber,
-    data.commit_sha,
-    data.author,
-    data.author_avatar,
-  ]);
+  try {
+    await pool.query(query, [
+      prNumber,
+      data.commit_sha,
+      data.author,
+      data.author_avatar,
+    ]);
 
-  // Update PR status if provided
-  if (data.status_pr) {
-    await updatePipelineStatus(prNumber, "status_pr", data.status_pr);
+    console.log(`✅ Pipeline run for PR #${prNumber} upserted successfully`);
+
+    // Update PR status if provided
+    if (data.status_pr) {
+      await updatePipelineStatus(prNumber, "status_pr", data.status_pr);
+    }
+  } catch (error) {
+    console.error(`❌ Failed to upsert pipeline run for PR #${prNumber}:`, error.message);
+    throw error;
   }
 }
 
 async function updatePipelineStatus(prNumber, statusField, statusValue) {
+  console.log(`📊 Updating PR #${prNumber} ${statusField} to: ${statusValue}`);
+
   const timestamp = new Date().toISOString();
 
   // Update the specific status field and append to history JSONB
@@ -641,8 +748,13 @@ async function updatePipelineStatus(prNumber, statusField, statusValue) {
     at: timestamp,
   });
 
-  await pool.query(query, [statusValue, historyEntry, prNumber]);
-  console.log(`📊 Updated PR #${prNumber}: ${statusField} = ${statusValue}`);
+  try {
+    await pool.query(query, [statusValue, historyEntry, prNumber]);
+    console.log(`✅ PR #${prNumber} ${statusField} updated to: ${statusValue}`);
+  } catch (error) {
+    console.error(`❌ Failed to update PR #${prNumber} ${statusField}:`, error.message);
+    throw error;
+  }
 }
 
 // Graceful shutdown
