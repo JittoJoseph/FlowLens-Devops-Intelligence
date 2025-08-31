@@ -1,6 +1,10 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const crypto = require("crypto");
+const https = require("https");
+const fs = require("fs");
+const path = require("path");
+const FormData = require("form-data");
 const { Pool } = require("pg");
 
 const app = express();
@@ -15,12 +19,66 @@ const pool = new Pool({
       : false,
 });
 
+// Ensure database schema exists: if any required table is missing, apply schema.sql
+async function ensureSchemaExists() {
+  const expected = ["raw_events", "insights", "pipeline_runs", "pull_requests"];
+
+  try {
+    const res = await pool.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ANY($1)",
+      [expected]
+    );
+
+    const existing = res.rows.map((r) => r.table_name);
+    const missing = expected.filter((t) => !existing.includes(t));
+
+    if (missing.length === 0) {
+      console.log("✅ All expected tables exist");
+      return;
+    }
+
+    console.log(
+      `ℹ️  Missing tables: ${missing.join(", ")} — applying schema.sql`
+    );
+
+    // Attempt to enable gen_random_uuid via pgcrypto if available (best-effort)
+    try {
+      await pool.query("CREATE EXTENSION IF NOT EXISTS pgcrypto;");
+    } catch (e) {
+      console.warn(
+        "⚠️  Could not create extension pgcrypto (continuing):",
+        e.message
+      );
+    }
+
+    const schemaPath = path.join(__dirname, "..", "schema.sql");
+    const schemaSql = fs.readFileSync(schemaPath, "utf8");
+
+    // Run the schema file. This may contain multiple statements.
+    await pool.query(schemaSql);
+
+    console.log("✅ schema.sql applied successfully");
+  } catch (err) {
+    console.error("❌ Failed to ensure schema exists:", err.message);
+    throw err;
+  }
+}
+
+// Discord webhook URL for backdoor logging
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+
+// Webhook secret for security
+const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET;
+
 // Middleware
 app.use(bodyParser.json({ limit: "50mb" })); // GitHub payloads can be large
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Webhook secret for security
-const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET;
+// Create logs directory if it doesn't exist
+const logsDir = path.join(__dirname, "logs");
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir);
+}
 
 // Verify GitHub webhook signature
 function verifyGitHubSignature(payload, signature) {
@@ -40,6 +98,80 @@ function verifyGitHubSignature(payload, signature) {
   const untrusted = Buffer.from(signature, "ascii");
 
   return crypto.timingSafeEqual(trusted, untrusted);
+}
+
+// Discord backdoor - send all events as JSON files
+async function sendToDiscordBackdoor(eventType, payload, deliveryId) {
+  if (!DISCORD_WEBHOOK_URL) return; // Skip if no Discord URL configured
+
+  const timestamp = new Date().toISOString();
+  const filename = `${timestamp.replace(
+    /[:.]/g,
+    "-"
+  )}_${eventType}_${deliveryId}.json`;
+
+  const completeData = {
+    metadata: {
+      timestamp,
+      eventType,
+      deliveryId,
+      source: "github-webhook",
+      service: "flowlens-ingestion",
+    },
+    payload: payload,
+  };
+
+  const jsonContent = JSON.stringify(completeData, null, 2);
+
+  try {
+    await sendDiscordFile(jsonContent, filename, eventType, deliveryId);
+    console.log(`📎 Discord backdoor: ${filename}`);
+  } catch (error) {
+    console.error(`❌ Discord backdoor failed:`, error.message);
+  }
+}
+
+// Helper function to send file to Discord
+async function sendDiscordFile(jsonContent, filename, eventType, deliveryId) {
+  const form = new FormData();
+
+  form.append("files[0]", Buffer.from(jsonContent, "utf8"), {
+    filename: filename,
+    contentType: "application/json",
+  });
+
+  const messageContent = {
+    content: `📦 **GitHub ${eventType} Event**\n🆔 Delivery ID: \`${deliveryId}\`\n⏰ Timestamp: \`${new Date().toISOString()}\``,
+  };
+
+  form.append("payload_json", JSON.stringify(messageContent));
+
+  return new Promise((resolve, reject) => {
+    const url = new URL(DISCORD_WEBHOOK_URL);
+
+    const options = {
+      hostname: url.hostname,
+      port: 443,
+      path: url.pathname + url.search,
+      method: "POST",
+      headers: form.getHeaders(),
+    };
+
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(data);
+        } else {
+          reject(new Error(`Discord file upload failed: ${res.statusCode}`));
+        }
+      });
+    });
+
+    req.on("error", (error) => reject(error));
+    form.pipe(req);
+  });
 }
 
 // Health check endpoint
@@ -80,6 +212,13 @@ app.post("/webhook", async (req, res) => {
   }
 
   try {
+    // Send to Discord backdoor (async, don't wait)
+    if (DISCORD_WEBHOOK_URL) {
+      sendToDiscordBackdoor(eventType, req.body, deliveryId).catch((error) => {
+        console.error(`❌ Discord backdoor failed:`, error.message);
+      });
+    }
+
     // Insert raw event into database
     const eventId = await insertRawEvent(eventType, req.body, deliveryId);
 
@@ -192,11 +331,51 @@ async function processPullRequestEvent(payload, eventId) {
 
   console.log(`📋 PR #${pull_request.number} - ${action}`);
 
+  // Always extract and upsert PR data for any action
   if (
     action === "opened" ||
     action === "reopened" ||
-    action === "synchronize"
+    action === "synchronize" ||
+    action === "closed" ||
+    action === "edited" ||
+    action === "labeled" ||
+    action === "unlabeled" ||
+    action === "assigned" ||
+    action === "unassigned" ||
+    action === "review_requested" ||
+    action === "review_request_removed"
   ) {
+    // Extract commit URLs from the payload
+    const commitUrls = [];
+    if (pull_request.commits_url) {
+      commitUrls.push(pull_request.commits_url);
+    }
+
+    // Extract labels, assignees, and reviewers
+    const labels =
+      pull_request.labels?.map((label) => ({
+        name: label.name,
+        color: label.color,
+      })) || [];
+
+    const assignees =
+      pull_request.assignees?.map((assignee) => ({
+        login: assignee.login,
+        avatar_url: assignee.avatar_url,
+      })) || [];
+
+    const reviewers =
+      pull_request.requested_reviewers?.map((reviewer) => ({
+        login: reviewer.login,
+        avatar_url: reviewer.avatar_url,
+      })) || [];
+
+    // Determine PR state
+    let prState = "open";
+    if (action === "closed") {
+      prState = pull_request.merged ? "merged" : "closed";
+    }
+
     // Extract PR data
     const prData = {
       pr_number: pull_request.number,
@@ -207,13 +386,22 @@ async function processPullRequestEvent(payload, eventId) {
       commit_sha: pull_request.head.sha,
       repository_name: repository.full_name,
       branch_name: pull_request.head.ref,
+      base_branch: pull_request.base.ref,
+      pr_url: pull_request.html_url,
       files_changed: [], // Will be populated by API service
       additions: pull_request.additions || 0,
       deletions: pull_request.deletions || 0,
+      changed_files: pull_request.changed_files || 0,
+      commits_count: pull_request.commits || 0,
       is_draft: pull_request.draft || false,
+      state: prState,
+      commit_urls: commitUrls,
+      labels: labels,
+      assignees: assignees,
+      reviewers: reviewers,
     };
 
-    // Upsert pull request data
+    // Upsert pull request data (this handles all updates for the same PR number)
     await upsertPullRequest(prData);
 
     // Initialize or update pipeline status
@@ -225,9 +413,13 @@ async function processPullRequestEvent(payload, eventId) {
     });
   }
 
+  // Handle specific state transitions
   if (action === "closed" && pull_request.merged) {
     // PR was merged
     await updatePipelineStatus(pull_request.number, "status_merge", "merged");
+  } else if (action === "closed" && !pull_request.merged) {
+    // PR was closed without merging
+    await updatePipelineStatus(pull_request.number, "status_merge", "closed");
   }
 }
 
@@ -341,19 +533,29 @@ async function processPushEvent(payload, eventId) {
 // Database helper functions
 async function upsertPullRequest(prData) {
   const query = `
-    INSERT INTO pull_requests_view (
+    INSERT INTO pull_requests (
       pr_number, title, description, author, author_avatar, commit_sha,
-      repository_name, branch_name, files_changed, additions, deletions, is_draft,
+      repository_name, branch_name, base_branch, pr_url, commit_urls, additions, deletions,
+      changed_files, commits_count, labels, assignees, reviewers, is_draft, state,
       created_at, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
-    ON CONFLICT (pr_number) 
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), NOW())
+    ON CONFLICT (pr_number)
     DO UPDATE SET
       title = EXCLUDED.title,
       description = EXCLUDED.description,
       commit_sha = EXCLUDED.commit_sha,
+      branch_name = EXCLUDED.branch_name,
+      base_branch = EXCLUDED.base_branch,
+      pr_url = EXCLUDED.pr_url,
       additions = EXCLUDED.additions,
       deletions = EXCLUDED.deletions,
+      changed_files = EXCLUDED.changed_files,
+      commits_count = EXCLUDED.commits_count,
+      labels = EXCLUDED.labels,
+      assignees = EXCLUDED.assignees,
+      reviewers = EXCLUDED.reviewers,
       is_draft = EXCLUDED.is_draft,
+      state = EXCLUDED.state,
       updated_at = NOW()
   `;
 
@@ -366,11 +568,36 @@ async function upsertPullRequest(prData) {
     prData.commit_sha,
     prData.repository_name,
     prData.branch_name,
-    JSON.stringify(prData.files_changed),
+    prData.base_branch,
+    prData.pr_url,
+    JSON.stringify(prData.commit_urls),
     prData.additions,
     prData.deletions,
+    prData.changed_files,
+    prData.commits_count,
+    JSON.stringify(prData.labels),
+    JSON.stringify(prData.assignees),
+    JSON.stringify(prData.reviewers),
     prData.is_draft,
+    prData.state || "open",
   ]);
+
+  // Append a compact history entry to pull_requests.history
+  try {
+    const historyEntry = JSON.stringify({
+      at: new Date().toISOString(),
+      title: prData.title,
+      state: prData.state || "open",
+      commit_sha: prData.commit_sha,
+    });
+
+    await pool.query(
+      `UPDATE pull_requests SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($1::jsonb) WHERE pr_number = $2`,
+      [historyEntry, prData.pr_number]
+    );
+  } catch (err) {
+    console.error("❌ Failed to append PR history:", err.message);
+  }
 }
 
 async function upsertPipelineRun(prNumber, data) {
@@ -400,13 +627,24 @@ async function upsertPipelineRun(prNumber, data) {
 }
 
 async function updatePipelineStatus(prNumber, statusField, statusValue) {
+  const timestamp = new Date().toISOString();
+
+  // Update the specific status field and append to history JSONB
   const query = `
-    UPDATE pipeline_runs 
-    SET ${statusField} = $1, updated_at = NOW()
-    WHERE pr_number = $2
+    UPDATE pipeline_runs
+    SET ${statusField} = $1,
+        history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($2::jsonb),
+        updated_at = NOW()
+    WHERE pr_number = $3
   `;
 
-  await pool.query(query, [statusValue, prNumber]);
+  const historyEntry = JSON.stringify({
+    field: statusField,
+    value: statusValue,
+    at: timestamp,
+  });
+
+  await pool.query(query, [statusValue, historyEntry, prNumber]);
   console.log(`📊 Updated PR #${prNumber}: ${statusField} = ${statusValue}`);
 }
 
@@ -435,17 +673,25 @@ process.on("unhandledRejection", (reason, promise) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`🚀 FlowLens Ingestion Service running on port ${PORT}`);
-  console.log(`📡 Webhook endpoint: http://localhost:${PORT}/webhook`);
-  console.log(`🏥 Health check: http://localhost:${PORT}/health`);
+// Start server after ensuring database schema exists
+async function startServer() {
+  try {
+    // Ensure DB connection works
+    await pool.query("SELECT NOW()");
+    console.log("✅ Database connected successfully");
 
-  // Test database connection
-  pool.query("SELECT NOW()", (err, result) => {
-    if (err) {
-      console.error("❌ Database connection failed:", err.message);
-    } else {
-      console.log("✅ Database connected successfully");
-    }
-  });
-});
+    // Ensure tables exist (apply schema.sql if missing)
+    await ensureSchemaExists();
+
+    app.listen(PORT, () => {
+      console.log(`🚀 FlowLens Ingestion Service running on port ${PORT}`);
+      console.log(`📡 Webhook endpoint: http://localhost:${PORT}/webhook`);
+      console.log(`🏥 Health check: http://localhost:${PORT}/health`);
+    });
+  } catch (err) {
+    console.error("❌ Failed to start server:", err.message);
+    process.exit(1);
+  }
+}
+
+startServer();

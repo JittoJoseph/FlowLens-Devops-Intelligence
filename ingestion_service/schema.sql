@@ -1,4 +1,4 @@
--- FlowLens AI-Powered DevOps Dashboard Database Schema
+-- FlowLens AI-Powered DevOps Dashboard Database Schema (copied into ingestion_service)
 -- Streamlined for actual GitHub webhook data and PRD requirements
 -- Optimized for YugabyteDB (PostgreSQL-compatible)
 -- Date: August 31, 2025
