@@ -329,6 +329,68 @@ app.get("/db-status", async (req, res) => {
   }
 });
 
+// Reset database - DEVELOPMENT ONLY
+app.post("/reset-db", async (req, res) => {
+  const { secret } = req.body;
+
+  // Verify the secret matches GitHub webhook secret
+  if (!secret || secret !== WEBHOOK_SECRET) {
+    console.warn("❌ Invalid or missing secret for database reset");
+    return res.status(401).json({ error: "Invalid secret" });
+  }
+
+  try {
+    console.log("🔄 Resetting database...");
+
+    // Drop indexes first
+    const indexes = [
+      "idx_raw_events_processed",
+      "idx_raw_events_delivery",
+      "idx_insights_pr",
+      "idx_pipeline_runs_status",
+      "idx_pipeline_runs_pr",
+      "idx_pr_updated",
+      "idx_pr_author",
+    ];
+
+    for (const index of indexes) {
+      try {
+        await pool.query(`DROP INDEX IF EXISTS ${index}`);
+        console.log(`✅ Dropped index: ${index}`);
+      } catch (error) {
+        console.warn(`⚠️  Could not drop index ${index}:`, error.message);
+      }
+    }
+
+    // Drop tables in reverse order (to handle foreign keys)
+    const tables = ["insights", "pipeline_runs", "pull_requests", "raw_events"];
+
+    for (const table of tables) {
+      try {
+        await pool.query(`DROP TABLE IF EXISTS ${table} CASCADE`);
+        console.log(`✅ Dropped table: ${table}`);
+      } catch (error) {
+        console.warn(`⚠️  Could not drop ${table}:`, error.message);
+      }
+    }
+
+    // Recreate schema
+    await ensureSchemaExists();
+
+    console.log("✅ Database reset complete");
+    res.json({
+      success: true,
+      message: "Database reset and schema applied successfully",
+    });
+  } catch (error) {
+    console.error("❌ Database reset failed:", error.message);
+    res.status(500).json({
+      error: "Database reset failed",
+      details: error.message,
+    });
+  }
+});
+
 // Insert raw event into database
 async function insertRawEvent(eventType, payload, deliveryId) {
   console.log(`💾 Inserting raw event: ${eventType} (delivery: ${deliveryId})`);
