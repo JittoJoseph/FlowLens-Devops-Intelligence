@@ -12,50 +12,54 @@ def stop_poller():
     _running = False
     logger.info("Stop signal received for event poller.")
 
-async def poll_for_events():
-    logger.info("Starting robust database event poller...")
+async def poll_for_events(is_fallback: bool = False):
+    """
+    Polls the database for unprocessed events. Can run as the primary mechanism
+    or as a slow-running backup to a real-time listener.
+    """
+    sleep_interval = 30 if is_fallback else 2
+    log_prefix = "Fallback Poller" if is_fallback else "Event Poller"
+    logger.info(f"Starting {log_prefix} with {sleep_interval}s interval...")
     
     while _running:
         try:
-            
+            # Fetch one unprocessed event, oldest first.
             events = await db_helpers.select(
                 "raw_events",
                 where={"processed": False},
-                order_by="received_at", # order by oldest first
+                order_by="received_at",
                 limit=1
             )
-            event_to_process = events[0] if events else None
             
-            if event_to_process:
+            if events:
+                event_to_process = events[0]
                 event_id = event_to_process['id']
-                logger.success(f"Found new event to process: {event_id}")
+                logger.success(f"[{log_prefix}] Found new event to process: {event_id}")
+                
                 try:
-                    # --- THE CORE LOGIC CHANGE ---
-                    # Process the event first.
+                    # Process the event first. If it fails, an exception is raised.
                     await process_event_by_id(event_id)
                     
-                    # If and only if processing succeeds, mark it as processed.
+                    # ONLY if processing succeeds, mark it as processed.
                     await db_helpers.update(
                         "raw_events", data={"processed": True}, where={"id": event_id}
                     )
-                    logger.info(f"Successfully processed and marked event {event_id}.")
-
+                    logger.info(f"[{log_prefix}] Successfully processed and marked event {event_id}.")
+                
                 except Exception as e:
-                    # If process_event_by_id raised an exception, we log it here.
-                    # The event is NOT marked as processed and will be retried on the next poll cycle.
-                    # This prevents losing events on transient errors (e.g., AI API outage).
-                    logger.error(f"Failed to process event {event_id}, it will be retried. Error: {e}")
-                    # Optional: Add a delay here to prevent rapid-fire retries on a persistent error.
+                    # If processing fails, the event remains unprocessed for the next cycle.
+                    logger.error(f"[{log_prefix}] Failed to process event {event_id}, it will be retried. Error: {e}")
+                    # In case of failure, wait longer to prevent hammering a failing downstream service (e.g., AI API).
                     await asyncio.sleep(5)
             else:
                 # No events found, sleep and wait.
-                await asyncio.sleep(2)
+                await asyncio.sleep(sleep_interval)
 
         except asyncio.CancelledError:
-            logger.warning("Event poller task was cancelled.")
+            logger.warning(f"[{log_prefix}] task was cancelled.")
             break
         except Exception as e:
-            logger.error(f"An unexpected error occurred in the event poller loop: {e}. Retrying in 5s.")
+            logger.error(f"[{log_prefix}] An unexpected error occurred in the loop: {e}. Retrying in 5s.")
             await asyncio.sleep(5)
     
-    logger.info("Event poller has shut down.")
+    logger.info(f"{log_prefix} has shut down.")
