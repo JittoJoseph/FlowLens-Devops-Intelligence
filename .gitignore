@@ -1,5 +1,10 @@
 /ingestion_service/node_modules
 /ingestion_service/sampleresponses
-__venv__/
+/__venv__/
 root.*
-.vscode/
+/.vscode/
+
+.env
+*.env
+*.env.*
+__pycache__/

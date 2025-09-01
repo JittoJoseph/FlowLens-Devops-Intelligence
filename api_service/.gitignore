@@ -1,6 +1,0 @@
-__venv__/
-.env
-*.env
-*.env.*
-__pycache__/
-root.*
