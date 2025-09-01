@@ -441,6 +441,27 @@ if (process.env.NODE_ENV !== "production") {
   });
 }
 
+// Helper function to fetch changed files from GitHub API
+async function fetchChangedFiles(repositoryFullName, prNumber) {
+  try {
+    const url = `https://api.github.com/repos/${repositoryFullName}/pulls/${prNumber}/files`;
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.warn(
+        `⚠️ Failed to fetch files for PR #${prNumber}: ${response.status}`
+      );
+      return [];
+    }
+
+    const files = await response.json();
+    return files.map((file) => file.filename);
+  } catch (error) {
+    console.warn(`⚠️ Error fetching files for PR #${prNumber}:`, error.message);
+    return [];
+  }
+}
+
 // Insert raw event into database
 async function insertRawEvent(eventType, payload, deliveryId) {
   const query = `
@@ -563,6 +584,12 @@ async function processPullRequestEvent(payload, eventId, markChanged = null) {
       prState = pull_request.merged ? "merged" : "closed";
     }
 
+    // Fetch changed files from GitHub API
+    const filesChanged = await fetchChangedFiles(
+      repository.full_name,
+      pull_request.number
+    );
+
     // Extract PR data
     const prData = {
       pr_number: pull_request.number,
@@ -575,7 +602,7 @@ async function processPullRequestEvent(payload, eventId, markChanged = null) {
       branch_name: pull_request.head.ref,
       base_branch: pull_request.base.ref,
       pr_url: pull_request.html_url,
-      files_changed: [], // Will be populated by API service
+      files_changed: filesChanged,
       additions: pull_request.additions || 0,
       deletions: pull_request.deletions || 0,
       changed_files: pull_request.changed_files || 0,
@@ -816,10 +843,10 @@ async function upsertPullRequest(prData) {
   const query = `
     INSERT INTO pull_requests (
       pr_number, title, description, author, author_avatar, commit_sha,
-      repository_name, branch_name, base_branch, pr_url, commit_urls, additions, deletions,
+      repository_name, branch_name, base_branch, pr_url, commit_urls, files_changed, additions, deletions,
       changed_files, commits_count, labels, assignees, reviewers, is_draft, state,
       created_at, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), NOW())
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW(), NOW())
     ON CONFLICT (pr_number)
     DO UPDATE SET
       title = EXCLUDED.title,
@@ -828,6 +855,7 @@ async function upsertPullRequest(prData) {
       branch_name = EXCLUDED.branch_name,
       base_branch = EXCLUDED.base_branch,
       pr_url = EXCLUDED.pr_url,
+      files_changed = EXCLUDED.files_changed,
       additions = EXCLUDED.additions,
       deletions = EXCLUDED.deletions,
       changed_files = EXCLUDED.changed_files,
@@ -853,6 +881,7 @@ async function upsertPullRequest(prData) {
       prData.base_branch,
       prData.pr_url,
       JSON.stringify(prData.commit_urls),
+      JSON.stringify(prData.files_changed),
       prData.additions,
       prData.deletions,
       prData.changed_files,
