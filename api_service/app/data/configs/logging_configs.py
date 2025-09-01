@@ -1,15 +1,12 @@
+# api_service/app/data/configs/logging_configs.py
+
 import logging
 import sys
 from loguru import logger
 from app.data.configs.app_settings import settings
 
-
 def formatter(record: dict) -> str:
-    """
-    A custom formatter that creates different log formats and appends extra data.
-    """
-    # This format is used for both production and debug,
-    # as the level of detail is controlled by what we log, not the format itself.
+    """A custom formatter that creates different log formats and appends extra data."""
     format_string = (
         "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
         "<level>{level: <8}</level> | "
@@ -20,7 +17,7 @@ def formatter(record: dict) -> str:
         extra_kv = [f"<cyan>{key}</cyan>=<yellow>{value}</yellow>" for key, value in record["extra"].items()]
         format_string += " | " + " ".join(extra_kv)
     
-    return format_string + "\n"
+    return format_string + "\n{exception}"
 
 def setup_logging():
     """Configures Loguru for production-ready, environment-aware logging."""
@@ -35,10 +32,7 @@ def setup_logging():
     
     # In production, silence the overly verbose logs from third-party libraries.
     if not settings.DEBUG:
-        noisy_libraries = [
-            "googleapiclient", "google_auth_httplib2", "httpx",
-            "urllib3", "oauth2client", "gspread", "httpcore",
-        ]
+        noisy_libraries = ["httpx", "httpcore", "google", "urllib3"]
         for lib_name in noisy_libraries:
             logging.getLogger(lib_name).setLevel(logging.WARNING)
 
@@ -48,7 +42,7 @@ def setup_logging():
         level=log_level,
         format=formatter,
         colorize=True,
-        enqueue=True, 
+        enqueue=True, # Make logging non-blocking
         backtrace=show_backtrace,
         diagnose=show_diagnose  
     )
