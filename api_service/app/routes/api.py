@@ -3,6 +3,7 @@
 import json
 from fastapi import APIRouter, HTTPException
 from loguru import logger
+from app.data.database.core_db import get_db
 from app.data.database import db_helpers
 
 router = APIRouter(prefix="/api", tags=["Frontend API"])
@@ -25,9 +26,8 @@ async def get_all_pull_requests():
             FROM pull_requests_view pr
             ORDER BY pr.updated_at DESC;
         """
-        pool = await db_helpers.get_pool()
-        async with pool.acquire() as connection:
-            rows = await connection.fetch(query)
+        db = get_db()
+        rows = await db.fetch_all(query)
 
         # This formatting logic now correctly handles JSON parsing and matches Flutter models.
         response_data = []

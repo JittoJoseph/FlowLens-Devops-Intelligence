@@ -92,15 +92,24 @@ The API service operates on a **resilient polling mechanism**, decoupling it fro
     DEBUG=True # for production, set it as False 
     HOST="0.0.0.0"
     PORT=8000
+
     DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require"
     GEMINI_API_KEY="your_google_gemini_api_key_here"
+    
+
+    # useful if using Gunicorn on production 
+    WORKERS = 1
+    WORKER_CONNECTIONS = 1000
+    GUNICORN_TIMEOUT = 120
+    KEEP_ALIVE = 5
+    GRACEFUL_TIMEOUT = 120
     ```
 5.  **Run the service:**
     > `for single worker environment` 
     > ```bash
     >uvicorn app.main:app --reload # for production, remove --reload flag
     >```
-    > `For multiple workers using gunicorn`
+    > `For multi using gunicorn`
     >```bash
     >python -m server_runner
     >```

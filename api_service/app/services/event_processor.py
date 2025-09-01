@@ -17,11 +17,10 @@ async def _get_latest_pr_state(pr_number: int):
              WHERE i.pr_number = pr.pr_number
              ORDER BY i.created_at DESC LIMIT 1) AS ai_insight
         FROM pull_requests_view pr
-        WHERE pr.pr_number = $1;
+        WHERE pr.pr_number = :pr_number;
     """
-    pool = await db_helpers.get_pool()
-    async with pool.acquire() as connection:
-        row = await connection.fetchrow(query, pr_number)
+    db = db_helpers.get_db()
+    row = await db.fetch_one(query, {"pr_number": pr_number})
     
     if not row: return None
     

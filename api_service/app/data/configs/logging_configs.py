@@ -1,23 +1,8 @@
-
 import logging
-from typing import List
 import sys
 from loguru import logger
 from app.data.configs.app_settings import settings
 
-
-class InterceptHandler(logging.Handler):
-    """Intercepts standard logging and redirects it to Loguru."""
-    def emit(self, record: logging.LogRecord):
-        try:
-            level = logger.level(record.levelname).name
-        except ValueError:
-            level = record.levelno
-        frame, depth = logging.currentframe(), 2
-        while frame and frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back
-            depth += 1
-        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 def formatter(record: dict) -> str:
     """
@@ -68,8 +53,4 @@ def setup_logging():
         diagnose=show_diagnose   # <-- Controlled by settings.DEBUG
     )
 
-    # We are NOT using the InterceptHandler anymore because the new, simpler
-    # Gunicorn setup handles the separation of logs perfectly.
-    # This prevents any potential for duplicate logs or configuration errors.
-    
     logger.info("Loguru logging configured", mode='DEBUG' if settings.DEBUG else 'PRODUCTION')

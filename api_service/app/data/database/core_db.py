@@ -1,51 +1,40 @@
 # api_service/app/data/database/core_db.py
 
-import asyncio
 from typing import Optional
 from loguru import logger
-import asyncpg
+from databases import Database
 from app.data.configs.app_settings import settings
 
-# --- Configuration ---
-POOL_MIN_SIZE = settings.POOL_MIN_SIZE
-POOL_MAX_SIZE = settings.POOL_MAX_SIZE
-POOL_ACQUIRE_TIMEOUT = settings.POOL_ACQUIRE_TIMEOUT
-
 # --- Database State ---
-pool: Optional[asyncpg.Pool] = None
-_pool_lock = asyncio.Lock()
+database: Optional[Database] = None
 
-async def get_pool() -> asyncpg.Pool:
-    """Returns the connection pool for handling API requests."""
-    global pool
-    if pool:
-        return pool
-    
-    async with _pool_lock:
-        if pool is None:
-            logger.info("Creating database connection pool...")
-            try:
-                pool = await asyncpg.create_pool(
-                    dsn=settings.DATABASE_URL,
-                    min_size=POOL_MIN_SIZE,
-                    max_size=POOL_MAX_SIZE,
-                    timeout=POOL_ACQUIRE_TIMEOUT
-                )
-                logger.success("Database connection pool created successfully.")
-            except Exception as e:
-                logger.critical("Could not create database pool", error=str(e))
-                raise
-    return pool
+def get_db() -> Database:
+    """Returns the database instance."""
+    global database
+    if database is None:
+        database = Database(
+            settings.DATABASE_URL,
+            min_size=settings.POOL_MIN_SIZE,
+            max_size=settings.POOL_MAX_SIZE,
+        )
+    return database
 
 async def connect():
-    """Initializes the main pool on startup."""
-    await get_pool()
+    """Initializes the main database connection on startup."""
+    db = get_db()
+    if not db.is_connected:
+        logger.info("Connecting to database...")
+        try:
+            await db.connect()
+            logger.success("Database connection established.")
+        except Exception as e:
+            logger.critical("Could not connect to database", error=str(e))
+            raise
 
 async def disconnect():
     """Closes all connections in the pool on shutdown."""
-    global pool
-    if pool:
-        logger.info("Closing database connection pool...")
-        await pool.close()
-        pool = None
-        logger.success("Database connection pool closed.")
+    db = get_db()
+    if db.is_connected:
+        logger.info("Closing database connection...")
+        await db.disconnect()
+        logger.success("Database connection closed.")
