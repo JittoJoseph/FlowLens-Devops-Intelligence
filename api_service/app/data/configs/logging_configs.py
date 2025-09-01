@@ -48,9 +48,9 @@ def setup_logging():
         level=log_level,
         format=formatter,
         colorize=True,
-        enqueue=True, # For performance
-        backtrace=show_backtrace, # <-- Controlled by settings.DEBUG
-        diagnose=show_diagnose   # <-- Controlled by settings.DEBUG
+        enqueue=True, 
+        backtrace=show_backtrace,
+        diagnose=show_diagnose  
     )
 
     logger.info("Loguru logging configured", mode='DEBUG' if settings.DEBUG else 'PRODUCTION')
