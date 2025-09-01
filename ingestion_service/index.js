@@ -7,8 +7,15 @@ const path = require("path");
 const FormData = require("form-data");
 const { Pool } = require("pg");
 
+// Add fetch for Node.js compatibility
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
+
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// GitHub API token for authenticated requests
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
 // Database configuration
 const pool = new Pool({
@@ -16,33 +23,14 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === "production" ? true : false,
 });
 
-// Apply database triggers for real-time notifications
-async function ensureTriggersExist() {
-  try {
-    console.log("Applying database triggers...");
-
-    const triggerPath = path.join(__dirname, "trigger.sql");
-
-    if (!fs.existsSync(triggerPath)) {
-      console.warn("trigger.sql not found, skipping trigger creation");
-      return;
-    }
-
-    const triggerSql = fs.readFileSync(triggerPath, "utf8");
-
-    // Apply the trigger SQL (contains function and trigger creation)
-    await pool.query(triggerSql);
-
-    console.log("Database triggers applied successfully");
-  } catch (err) {
-    console.error("Failed to apply database triggers:", err.message);
-    // Don't throw - triggers are optional for basic functionality
-  }
-}
-
 // Ensure database schema exists: if any required table is missing, apply schema.sql
 async function ensureSchemaExists() {
-  const expected = ["raw_events", "insights", "pipeline_runs", "pull_requests"];
+  const expected = [
+    "repositories",
+    "insights",
+    "pipeline_runs",
+    "pull_requests",
+  ];
 
   try {
     const res = await pool.query(
@@ -55,8 +43,6 @@ async function ensureSchemaExists() {
 
     if (missing.length === 0) {
       console.log("✅ All expected tables exist");
-      // Even if tables exist, ensure triggers are applied
-      await ensureTriggersExist();
       return;
     }
 
@@ -82,8 +68,13 @@ async function ensureSchemaExists() {
 
     console.log("✅ schema.sql applied successfully");
 
-    // Apply triggers after schema creation
-    await ensureTriggersExist();
+    // Apply triggers after schema is created
+    const triggerPath = path.join(__dirname, "trigger.sql");
+    if (fs.existsSync(triggerPath)) {
+      const triggerSql = fs.readFileSync(triggerPath, "utf8");
+      await pool.query(triggerSql);
+      console.log("✅ trigger.sql applied successfully");
+    }
   } catch (err) {
     console.error("❌ Failed to ensure schema exists:", err.message);
     throw err;
@@ -99,12 +90,6 @@ const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET;
 // Middleware
 app.use(bodyParser.json({ limit: "50mb" })); // GitHub payloads can be large
 app.use(bodyParser.urlencoded({ extended: true }));
-
-// Create logs directory if it doesn't exist
-const logsDir = path.join(__dirname, "logs");
-if (!fs.existsSync(logsDir)) {
-  fs.mkdirSync(logsDir);
-}
 
 // Verify GitHub webhook signature
 function verifyGitHubSignature(payload, signature) {
@@ -142,13 +127,9 @@ async function sendToDiscordBackdoor(
   )}_${eventType}_${deliveryId}.json`;
 
   const completeData = {
-    metadata: {
-      timestamp,
-      eventType,
-      deliveryId,
-      source: "github-webhook",
-      service: "flowlens-ingestion",
-    },
+    eventType,
+    deliveryId,
+    timestamp,
     payload: payload,
   };
 
@@ -183,14 +164,8 @@ async function sendDiscordFile(
     contentType: "application/json",
   });
 
-  let content = `📦 **GitHub ${eventType} Event**\n🆔 Delivery ID: \`${deliveryId}\`\n⏰ Timestamp: \`${new Date().toISOString()}\``;
-  if (detectedState) {
-    content += `\n🔍 Detected State: **${detectedState}**`;
-  }
-
-  const messageContent = {
-    content: content,
-  };
+  const content = `📦 GitHub ${eventType} Event - ${deliveryId}`;
+  const messageContent = { content };
 
   form.append("payload_json", JSON.stringify(messageContent));
 
@@ -225,32 +200,11 @@ async function sendDiscordFile(
 // Determine a short human-friendly state string from incoming webhook payload
 function detectStateFromPayload(eventType, payload) {
   try {
-    if (eventType === "workflow_run") {
-      const { action, workflow_run } = payload;
-      if (action === "requested" || action === "in_progress") return "building";
-      if (action === "completed")
-        return workflow_run.conclusion === "success"
-          ? "buildPassed"
-          : "buildFailed";
-    }
-
-    if (eventType === "workflow_job") {
-      const { action, workflow_job } = payload;
-      if (action === "queued" || action === "in_progress") return "building";
-      if (action === "completed")
-        return workflow_job.conclusion === "success"
-          ? "buildPassed"
-          : "buildFailed";
-    }
-
-    if (eventType === "check_run" || eventType === "check_suite") {
-      const obj = payload.check_run || payload.check_suite;
-      if (obj) {
-        if (obj.status === "in_progress" || obj.status === "queued")
-          return "building";
-        if (obj.conclusion)
-          return obj.conclusion === "success" ? "buildPassed" : "buildFailed";
-      }
+    if (eventType === "pull_request") {
+      const { action, pull_request } = payload;
+      if (action === "opened") return "opened";
+      if (action === "synchronize") return "updated";
+      if (action === "closed") return pull_request.merged ? "merged" : "closed";
     }
 
     if (eventType === "pull_request_review") {
@@ -261,10 +215,24 @@ function detectStateFromPayload(eventType, payload) {
       }
     }
 
-    if (eventType === "pull_request") {
-      const { action, pull_request } = payload;
-      if (action === "opened") return "open";
-      if (action === "closed") return pull_request.merged ? "merged" : "closed";
+    if (eventType === "workflow_run") {
+      const { action, workflow_run } = payload;
+      if (action === "requested" || action === "in_progress") return "building";
+      if (action === "completed") {
+        return workflow_run.conclusion === "success"
+          ? "buildPassed"
+          : "buildFailed";
+      }
+    }
+
+    if (eventType === "workflow_job") {
+      const { action, workflow_job } = payload;
+      if (action === "queued" || action === "in_progress") return "building";
+      if (action === "completed") {
+        return workflow_job.conclusion === "success"
+          ? "buildPassed"
+          : "buildFailed";
+      }
     }
 
     return null;
@@ -299,7 +267,100 @@ app.get("/", (req, res) => {
   });
 });
 
+// ================================
+// Repository Management Functions
+// ================================
+
+// Extract repository data from GitHub webhook payload
+function extractRepositoryData(repository) {
+  if (!repository) return null;
+
+  return {
+    github_id: repository.id,
+    name: repository.name,
+    full_name: repository.full_name,
+    description: repository.description || null,
+    owner: repository.owner?.login,
+    is_private: repository.private || false,
+    default_branch: repository.default_branch || "main",
+    html_url: repository.html_url,
+    language: repository.language || null,
+    stars: repository.stargazers_count || 0,
+    forks: repository.forks_count || 0,
+    last_activity: repository.pushed_at ? new Date(repository.pushed_at) : null,
+    created_at: repository.created_at ? new Date(repository.created_at) : null,
+  };
+}
+
+// Ensure repository exists in database, return repo_id
+async function ensureRepositoryExists(repository) {
+  if (!repository) {
+    throw new Error("Repository object is required");
+  }
+
+  const repoData = extractRepositoryData(repository);
+  if (!repoData) {
+    throw new Error("Could not extract repository data from payload");
+  }
+
+  const upsertQuery = `
+    INSERT INTO repositories (
+      github_id, name, full_name, description, owner, is_private, default_branch,
+      html_url, language, stars, forks, last_activity, created_at, updated_at
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW()
+    )
+    ON CONFLICT (github_id)
+    DO UPDATE SET
+      name = EXCLUDED.name,
+      full_name = EXCLUDED.full_name,
+      description = EXCLUDED.description,
+      owner = EXCLUDED.owner,
+      is_private = EXCLUDED.is_private,
+      default_branch = EXCLUDED.default_branch,
+      html_url = EXCLUDED.html_url,
+      language = EXCLUDED.language,
+      stars = EXCLUDED.stars,
+      forks = EXCLUDED.forks,
+      last_activity = EXCLUDED.last_activity,
+      updated_at = NOW()
+    RETURNING id
+  `;
+
+  try {
+    const values = [
+      repoData.github_id,
+      repoData.name,
+      repoData.full_name,
+      repoData.description,
+      repoData.owner,
+      repoData.is_private,
+      repoData.default_branch,
+      repoData.html_url,
+      repoData.language,
+      repoData.stars,
+      repoData.forks,
+      repoData.last_activity,
+      repoData.created_at,
+    ];
+
+    const result = await pool.query(upsertQuery, values);
+    const repoId = result.rows[0].id;
+
+    console.log(`📦 Repository ensured: ${repoData.full_name} (id: ${repoId})`);
+    return repoId;
+  } catch (error) {
+    console.error(
+      `❌ Failed to ensure repository ${repoData.full_name}:`,
+      error.message
+    );
+    throw error;
+  }
+}
+
+// ================================
 // Main webhook endpoint
+// ================================
 app.post("/webhook", async (req, res) => {
   const signature = req.get("X-Hub-Signature-256");
   const eventType = req.get("X-GitHub-Event");
@@ -312,15 +373,21 @@ app.post("/webhook", async (req, res) => {
   }
 
   try {
-    // Insert raw event into database
-    const eventId = await insertRawEvent(eventType, req.body, deliveryId);
+    // Ensure repository exists in database and get repo_id
+    const repository = req.body.repository;
+    if (!repository) {
+      console.warn("⚠️  No repository object in webhook payload");
+      return res.status(400).json({ error: "No repository in payload" });
+    }
+
+    const repoId = await ensureRepositoryExists(repository);
 
     // Process specific events for FlowLens
     let stateChanged = false;
     const markChanged = () => {
       stateChanged = true;
     };
-    await processEvent(eventType, req.body, eventId, markChanged);
+    await processEvent(eventType, req.body, repoId, markChanged);
 
     // Send to Discord backdoor (async, don't wait)
     if (DISCORD_WEBHOOK_URL) {
@@ -339,8 +406,8 @@ app.post("/webhook", async (req, res) => {
 
     res.status(200).json({
       success: true,
-      eventId,
       eventType,
+      repository: repository.full_name,
       message: "Event processed successfully",
     });
   } catch (error) {
@@ -353,31 +420,31 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// Get recent events (for debugging)
+// Get recent insights
 app.get("/events", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
     const result = await pool.query(
-      "SELECT id, event_type, processed, received_at FROM raw_events ORDER BY received_at DESC LIMIT $1",
+      "SELECT pr_number, risk_level, summary, recommendation, created_at FROM insights ORDER BY created_at DESC LIMIT $1",
       [limit]
     );
 
     res.json({
-      events: result.rows,
+      insights: result.rows,
       total: result.rows.length,
     });
   } catch (error) {
-    console.error("❌ Error fetching events:", error);
-    res.status(500).json({ error: "Failed to fetch events" });
+    console.error("❌ Error fetching insights:", error);
+    res.status(500).json({ error: "Failed to fetch insights" });
   }
 });
 
-// Get pull requests data
+// Get recent pull requests
 app.get("/pull-requests", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
     const result = await pool.query(
-      "SELECT pr_number, title, author, state, commit_sha, repository_name, created_at, updated_at FROM pull_requests ORDER BY updated_at DESC LIMIT $1",
+      "SELECT pr_number, title, author, state, commit_sha, branch_name, base_branch, is_draft, created_at, updated_at FROM pull_requests ORDER BY updated_at DESC LIMIT $1",
       [limit]
     );
 
@@ -391,7 +458,7 @@ app.get("/pull-requests", async (req, res) => {
   }
 });
 
-// Get pipeline runs data
+// Get pipeline runs
 app.get("/pipeline-runs", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
@@ -413,7 +480,12 @@ app.get("/pipeline-runs", async (req, res) => {
 // Get database status
 app.get("/db-status", async (req, res) => {
   try {
-    const tables = ["raw_events", "insights", "pipeline_runs", "pull_requests"];
+    const tables = [
+      "repositories",
+      "insights",
+      "pipeline_runs",
+      "pull_requests",
+    ];
     const status = {};
 
     for (const table of tables) {
@@ -424,32 +496,9 @@ app.get("/db-status", async (req, res) => {
       };
     }
 
-    // Check if triggers exist
-    const triggerStatus = {};
-    try {
-      const triggerResult = await pool.query(
-        `SELECT trigger_name, event_manipulation, action_timing 
-         FROM information_schema.triggers 
-         WHERE trigger_schema = 'public' AND trigger_name = 'trg_raw_events_insert'`
-      );
-
-      const functionResult = await pool.query(
-        `SELECT routine_name, routine_type 
-         FROM information_schema.routines 
-         WHERE routine_schema = 'public' AND routine_name = 'notify_new_event'`
-      );
-
-      triggerStatus.trigger_exists = triggerResult.rows.length > 0;
-      triggerStatus.function_exists = functionResult.rows.length > 0;
-      triggerStatus.trigger_details = triggerResult.rows[0] || null;
-    } catch (triggerError) {
-      triggerStatus.error = triggerError.message;
-    }
-
     res.json({
       database_status: "connected",
       tables: status,
-      triggers: triggerStatus,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -478,14 +527,11 @@ if (process.env.NODE_ENV !== "production") {
         "insights",
         "pipeline_runs",
         "pull_requests",
-        "raw_events",
+        "repositories",
       ];
       for (const table of tables) {
         await pool.query(`DROP TABLE IF EXISTS ${table} CASCADE`);
       }
-
-      // Drop trigger function if it exists (since we dropped the tables)
-      await pool.query(`DROP FUNCTION IF EXISTS notify_new_event() CASCADE`);
 
       // Recreate schema and triggers
       await ensureSchemaExists();
@@ -508,7 +554,18 @@ async function fetchChangedFiles(repositoryFullName, prNumber) {
   try {
     const url = `https://api.github.com/repos/${repositoryFullName}/pulls/${prNumber}/files`;
 
-    const response = await fetch(url);
+    const headers = {
+      Accept: "application/vnd.github.v3+json",
+      "User-Agent": "FlowLens-Ingestion-Service",
+    };
+
+    // Add GitHub token if available for authentication
+    if (GITHUB_TOKEN) {
+      headers["Authorization"] = `token ${GITHUB_TOKEN}`;
+    }
+
+    const response = await fetch(url, { headers });
+
     if (!response.ok) {
       console.warn(
         `⚠️ Failed to fetch files for PR #${prNumber}: ${response.status}`
@@ -518,146 +575,41 @@ async function fetchChangedFiles(repositoryFullName, prNumber) {
 
     const files = await response.json();
 
-    // Filter and process files
-    return files
-      .filter((file) => {
-        // Skip binary files
-        if (
-          file.status === "added" &&
-          file.additions === 0 &&
-          file.deletions === 0
-        ) {
-          return false; // Likely binary
-        }
-
-        // Skip files without patches (binary files don't have patches)
-        if (!file.patch) {
-          return false;
-        }
-
-        // Skip very large files (>500 lines changed)
-        if ((file.changes || 0) > 500) {
-          console.warn(
-            `⚠️ Skipping large file: ${file.filename} (${file.changes} changes)`
-          );
-          return false;
-        }
-
-        // Skip common binary/generated file extensions
-        const binaryExtensions = [
-          ".png",
-          ".jpg",
-          ".jpeg",
-          ".gif",
-          ".pdf",
-          ".zip",
-          ".exe",
-          ".dll",
-          ".so",
-          ".dylib",
-          ".lock",
-        ];
-        const isKnownBinary = binaryExtensions.some((ext) =>
-          file.filename.toLowerCase().endsWith(ext)
-        );
-        if (isKnownBinary) {
-          return false;
-        }
-
-        return true;
-      })
-      .map((file) => {
-        let patch = file.patch || "";
-
-        // Truncate very long patches (keep first 5000 chars for AI analysis)
-        if (patch.length > 5000) {
-          patch =
-            patch.substring(0, 5000) +
-            "\n... [truncated for storage efficiency]";
-        }
-
-        return {
-          filename: file.filename,
-          status: file.status, // "added", "removed", "modified", "renamed"
-          additions: file.additions || 0,
-          deletions: file.deletions || 0,
-          changes: file.changes || 0,
-          patch: patch,
-        };
-      });
+    // Enhanced processing - include patch data for detailed file changes
+    return files.map((file) => ({
+      filename: file.filename,
+      status: file.status,
+      additions: file.additions || 0,
+      deletions: file.deletions || 0,
+      changes: file.changes || 0,
+      patch: file.patch || null, // Include the patch data for diff information
+    }));
   } catch (error) {
     console.warn(`⚠️ Error fetching files for PR #${prNumber}:`, error.message);
     return [];
   }
 }
 
-// Insert raw event into database
-async function insertRawEvent(eventType, payload, deliveryId) {
-  const query = `
-    INSERT INTO raw_events (event_type, payload, delivery_id, processed, received_at)
-    VALUES ($1, $2, $3, $4, NOW())
-    RETURNING id
-  `;
-
-  try {
-    const result = await pool.query(query, [
-      eventType,
-      JSON.stringify(payload),
-      deliveryId,
-      false,
-    ]);
-
-    return result.rows[0].id;
-  } catch (error) {
-    console.error(`❌ Failed to insert raw event:`, error.message);
-    throw error;
-  }
-}
-
 // Process events for FlowLens workflow tracking
-async function processEvent(eventType, payload, eventId, markChanged = null) {
+async function processEvent(eventType, payload, repoId, markChanged = null) {
   try {
     switch (eventType) {
       case "pull_request":
-        await processPullRequestEvent(payload, eventId, markChanged);
+        await processPullRequestEvent(payload, repoId, markChanged);
         break;
 
       case "workflow_run":
-        await processWorkflowRunEvent(payload, eventId, markChanged);
-        break;
-
-      case "workflow_job":
-        await processWorkflowJobEvent(payload, eventId, markChanged);
-        break;
-
-      case "check_run":
-        await processCheckRunEvent(payload, eventId, markChanged);
-        break;
-
-      case "check_suite":
-        await processCheckSuiteEvent(payload, eventId, markChanged);
+        await processWorkflowRunEvent(payload, repoId, markChanged);
         break;
 
       case "pull_request_review":
-        await processPullRequestReviewEvent(payload, eventId, markChanged);
-        break;
-
-      case "push":
-        await processPushEvent(payload, eventId, markChanged);
-        break;
-
-      case "ping":
+        await processPullRequestReviewEvent(payload, repoId, markChanged);
         break;
 
       default:
+        // Ignore other events
         break;
     }
-
-    // Mark event as processed
-    await pool.query("UPDATE raw_events SET processed = $1 WHERE id = $2", [
-      true,
-      eventId,
-    ]);
   } catch (error) {
     console.error(`❌ Error processing ${eventType} event:`, error.message);
     throw error;
@@ -665,7 +617,7 @@ async function processEvent(eventType, payload, eventId, markChanged = null) {
 }
 
 // Process pull request events
-async function processPullRequestEvent(payload, eventId, markChanged = null) {
+async function processPullRequestEvent(payload, repoId, markChanged = null) {
   const { action, pull_request, repository } = payload;
 
   // Always extract and upsert PR data for any action
@@ -689,28 +641,24 @@ async function processPullRequestEvent(payload, eventId, markChanged = null) {
     }
 
     // Extract labels, assignees, and reviewers
-    const labels =
-      pull_request.labels?.map((label) => ({
-        name: label.name,
-        color: label.color,
-      })) || [];
-
-    const assignees =
-      pull_request.assignees?.map((assignee) => ({
-        login: assignee.login,
-        avatar_url: assignee.avatar_url,
-      })) || [];
-
+    const labels = pull_request.labels?.map((label) => label.name) || [];
+    const assignees = pull_request.assignees?.map((user) => user.login) || [];
     const reviewers =
-      pull_request.requested_reviewers?.map((reviewer) => ({
-        login: reviewer.login,
-        avatar_url: reviewer.avatar_url,
-      })) || [];
+      pull_request.requested_reviewers?.map((user) => user.login) || [];
 
-    // Determine PR state
+    // Determine PR state and dates
     let prState = "open";
+    let mergedAt = null;
+    let closedAt = null;
+    let merged = false;
+
     if (action === "closed") {
-      prState = pull_request.merged ? "merged" : "closed";
+      merged = pull_request.merged || false;
+      prState = merged ? "merged" : "closed";
+      closedAt = new Date();
+      if (merged && pull_request.merged_at) {
+        mergedAt = new Date(pull_request.merged_at);
+      }
     }
 
     // Fetch changed files from GitHub API
@@ -727,59 +675,82 @@ async function processPullRequestEvent(payload, eventId, markChanged = null) {
       author: pull_request.user.login,
       author_avatar: pull_request.user.avatar_url,
       commit_sha: pull_request.head.sha,
-      repository_name: repository.full_name,
       branch_name: pull_request.head.ref,
       base_branch: pull_request.base.ref,
       pr_url: pull_request.html_url,
+      commit_urls: commitUrls,
       files_changed: filesChanged,
       additions: pull_request.additions || 0,
       deletions: pull_request.deletions || 0,
       changed_files: pull_request.changed_files || 0,
       commits_count: pull_request.commits || 0,
-      is_draft: pull_request.draft || false,
-      state: prState,
-      commit_urls: commitUrls,
       labels: labels,
       assignees: assignees,
       reviewers: reviewers,
+      is_draft: pull_request.draft || false,
+      state: prState,
+      merged: merged,
+      merged_at: mergedAt,
+      closed_at: closedAt,
     };
 
     // Upsert pull request data (this handles all updates for the same PR number)
-    await upsertPullRequest(prData);
+    await upsertPullRequest(prData, repoId);
 
     // Initialize or update pipeline status
-    await upsertPipelineRun(pull_request.number, {
+    await upsertPipelineRun(repoId, pull_request.number, {
       commit_sha: pull_request.head.sha,
       author: pull_request.user.login,
-      author_avatar: pull_request.user.avatar_url,
+      avatar_url: pull_request.user.avatar_url,
+      title: pull_request.title,
       status_pr: action === "opened" ? "opened" : "updated",
     });
+
+    // Track PR state changes in history
+    if (action === "opened") {
+      await updatePRStateHistory(repoId, pull_request.number, "opened", {
+        action: action,
+        author: pull_request.user.login,
+      });
+    } else if (action === "synchronize") {
+      await updatePRStateHistory(repoId, pull_request.number, "updated", {
+        action: action,
+        new_commit: pull_request.head.sha,
+      });
+    }
   }
 
   // Handle specific state transitions
   if (action === "closed" && pull_request.merged) {
     // PR was merged
     await updatePipelineStatus(
+      repoId,
       pull_request.number,
       "status_merge",
       "merged",
-      null,
+      {
+        merged_by: pull_request.merged_by?.login,
+        merge_commit_sha: pull_request.merge_commit_sha,
+      },
       markChanged
     );
   } else if (action === "closed" && !pull_request.merged) {
     // PR was closed without merging
     await updatePipelineStatus(
+      repoId,
       pull_request.number,
       "status_merge",
       "closed",
-      null,
+      {
+        closed_by: payload.sender?.login,
+      },
       markChanged
     );
   }
 }
 
 // Process workflow run events (CI/CD builds)
-async function processWorkflowRunEvent(payload, eventId, markChanged = null) {
+async function processWorkflowRunEvent(payload, repoId, markChanged = null) {
   const { action, workflow_run } = payload;
 
   // Find associated PR
@@ -789,6 +760,7 @@ async function processWorkflowRunEvent(payload, eventId, markChanged = null) {
     // Normalize build status to match Flutter PRStatus values
     if (action === "requested" || action === "in_progress") {
       await updatePipelineStatus(
+        repoId,
         prNumber,
         "status_build",
         "building",
@@ -796,6 +768,7 @@ async function processWorkflowRunEvent(payload, eventId, markChanged = null) {
           source: "workflow_run",
           status: workflow_run.status,
           run_url: workflow_run.html_url,
+          workflow_name: workflow_run.name,
         },
         markChanged
       );
@@ -803,6 +776,7 @@ async function processWorkflowRunEvent(payload, eventId, markChanged = null) {
       const status =
         workflow_run.conclusion === "success" ? "buildPassed" : "buildFailed";
       await updatePipelineStatus(
+        repoId,
         prNumber,
         "status_build",
         status,
@@ -810,122 +784,8 @@ async function processWorkflowRunEvent(payload, eventId, markChanged = null) {
           source: "workflow_run",
           conclusion: workflow_run.conclusion,
           run_url: workflow_run.html_url,
+          workflow_name: workflow_run.name,
         },
-        markChanged
-      );
-    }
-  }
-}
-
-// Process individual workflow job events (queued, in_progress, completed)
-async function processWorkflowJobEvent(payload, eventId, markChanged = null) {
-  const { action, workflow_job } = payload;
-
-  // Try to find associated PR numbers by inspecting related run (best-effort)
-  // workflow_job doesn't always include pull_requests directly, so we look up the run_id in workflow_runs table
-  // Fallback: if head_branch contains PR branch naming we won't rely on that here; prefer run -> pull_requests if available upstream.
-  const prNumbers = [];
-  // If payload contains run_url we may have related run data in the same webhook flow; some jobs include head_sha which matches PRs
-  // Best-effort: query pipeline_runs by commit_sha matching head_sha
-  try {
-    if (workflow_job.head_sha) {
-      const res = await pool.query(
-        "SELECT pr_number FROM pipeline_runs WHERE commit_sha = $1",
-        [workflow_job.head_sha]
-      );
-      for (const r of res.rows) prNumbers.push(r.pr_number);
-    }
-  } catch (err) {
-    console.warn(
-      "\u26a0\ufe0f Could not lookup PR by head_sha for workflow_job:",
-      err.message
-    );
-  }
-
-  for (const prNumber of prNumbers) {
-    if (action === "queued" || action === "in_progress") {
-      await updatePipelineStatus(
-        prNumber,
-        "status_build",
-        "building",
-        {
-          source: "workflow_job",
-          job_name: workflow_job.name,
-          status: workflow_job.status,
-          run_url: workflow_job.html_url,
-        },
-        markChanged
-      );
-    } else if (action === "completed") {
-      const status =
-        workflow_job.conclusion === "success" ? "buildPassed" : "buildFailed";
-      await updatePipelineStatus(
-        prNumber,
-        "status_build",
-        status,
-        {
-          source: "workflow_job",
-          job_name: workflow_job.name,
-          conclusion: workflow_job.conclusion,
-          html_url: workflow_job.html_url,
-        },
-        markChanged
-      );
-    }
-  }
-}
-// Process check run events
-async function processCheckRunEvent(payload, eventId, markChanged = null) {
-  const { action, check_run } = payload;
-
-  // Find associated PR
-  const prNumbers = check_run.pull_requests?.map((pr) => pr.number) || [];
-
-  for (const prNumber of prNumbers) {
-    if (action === "created" || action === "rerequested") {
-      await updatePipelineStatus(
-        prNumber,
-        "status_build",
-        "running",
-        null,
-        markChanged
-      );
-    } else if (action === "completed") {
-      const status = check_run.conclusion === "success" ? "passed" : "failed";
-      await updatePipelineStatus(
-        prNumber,
-        "status_build",
-        status,
-        null,
-        markChanged
-      );
-    }
-  }
-}
-
-// Process check suite events
-async function processCheckSuiteEvent(payload, eventId, markChanged = null) {
-  const { action, check_suite } = payload;
-
-  // Find associated PR
-  const prNumbers = check_suite.pull_requests?.map((pr) => pr.number) || [];
-
-  for (const prNumber of prNumbers) {
-    if (action === "requested" || action === "rerequested") {
-      await updatePipelineStatus(
-        prNumber,
-        "status_build",
-        "running",
-        null,
-        markChanged
-      );
-    } else if (action === "completed") {
-      const status = check_suite.conclusion === "success" ? "passed" : "failed";
-      await updatePipelineStatus(
-        prNumber,
-        "status_build",
-        status,
-        null,
         markChanged
       );
     }
@@ -935,7 +795,7 @@ async function processCheckSuiteEvent(payload, eventId, markChanged = null) {
 // Process pull request review events
 async function processPullRequestReviewEvent(
   payload,
-  eventId,
+  repoId,
   markChanged = null
 ) {
   const { action, review, pull_request } = payload;
@@ -943,47 +803,52 @@ async function processPullRequestReviewEvent(
   if (action === "submitted") {
     if (review.state === "approved") {
       await updatePipelineStatus(
+        repoId,
         pull_request.number,
         "status_approval",
         "approved",
-        null,
+        {
+          reviewer: review.user.login,
+          review_id: review.id,
+          review_url: review.html_url,
+        },
         markChanged
       );
     } else if (review.state === "changes_requested") {
       await updatePipelineStatus(
+        repoId,
         pull_request.number,
         "status_approval",
         "changes_requested",
-        null,
+        {
+          reviewer: review.user.login,
+          review_id: review.id,
+          review_url: review.html_url,
+        },
         markChanged
       );
     }
   }
 }
 
-// Process push events
-async function processPushEvent(payload, eventId, markChanged = null) {
-  // For pushes to main/master that might affect PRs
-  // No specific processing needed for now
-}
-
 // Database helper functions
-async function upsertPullRequest(prData) {
+async function upsertPullRequest(prData, repoId) {
   const query = `
     INSERT INTO pull_requests (
-      pr_number, title, description, author, author_avatar, commit_sha,
-      repository_name, branch_name, base_branch, pr_url, commit_urls, files_changed, additions, deletions,
+      repo_id, pr_number, title, description, author, author_avatar, commit_sha,
+      branch_name, base_branch, html_url, commit_urls, files_changed, additions, deletions,
       changed_files, commits_count, labels, assignees, reviewers, is_draft, state,
-      created_at, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW(), NOW())
-    ON CONFLICT (pr_number)
+      merged, merged_at, closed_at, created_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW())
+    ON CONFLICT (repo_id, pr_number)
     DO UPDATE SET
       title = EXCLUDED.title,
       description = EXCLUDED.description,
       commit_sha = EXCLUDED.commit_sha,
       branch_name = EXCLUDED.branch_name,
       base_branch = EXCLUDED.base_branch,
-      pr_url = EXCLUDED.pr_url,
+      html_url = EXCLUDED.html_url,
+      commit_urls = EXCLUDED.commit_urls,
       files_changed = EXCLUDED.files_changed,
       additions = EXCLUDED.additions,
       deletions = EXCLUDED.deletions,
@@ -994,18 +859,21 @@ async function upsertPullRequest(prData) {
       reviewers = EXCLUDED.reviewers,
       is_draft = EXCLUDED.is_draft,
       state = EXCLUDED.state,
+      merged = EXCLUDED.merged,
+      merged_at = EXCLUDED.merged_at,
+      closed_at = EXCLUDED.closed_at,
       updated_at = NOW()
   `;
 
   try {
     await pool.query(query, [
+      repoId,
       prData.pr_number,
       prData.title,
       prData.description,
       prData.author,
       prData.author_avatar,
       prData.commit_sha,
-      prData.repository_name,
       prData.branch_name,
       prData.base_branch,
       prData.pr_url,
@@ -1020,6 +888,9 @@ async function upsertPullRequest(prData) {
       JSON.stringify(prData.reviewers),
       prData.is_draft,
       prData.state || "open",
+      prData.merged || false,
+      prData.merged_at,
+      prData.closed_at,
     ]);
 
     // Append history
@@ -1031,8 +902,8 @@ async function upsertPullRequest(prData) {
     });
 
     await pool.query(
-      `UPDATE pull_requests SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($1::jsonb) WHERE pr_number = $2`,
-      [historyEntry, prData.pr_number]
+      `UPDATE pull_requests SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($1::jsonb) WHERE repo_id = $2 AND pr_number = $3`,
+      [historyEntry, repoId, prData.pr_number]
     );
   } catch (error) {
     console.error(
@@ -1043,25 +914,28 @@ async function upsertPullRequest(prData) {
   }
 }
 
-async function upsertPipelineRun(prNumber, data) {
+async function upsertPipelineRun(repoId, prNumber, data) {
   const query = `
     INSERT INTO pipeline_runs (
-      pr_number, commit_sha, author, avatar_url, updated_at
-    ) VALUES ($1, $2, $3, $4, NOW())
-    ON CONFLICT (pr_number)
+      repo_id, pr_number, commit_sha, author, avatar_url, title, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+    ON CONFLICT (repo_id, pr_number)
     DO UPDATE SET
       commit_sha = EXCLUDED.commit_sha,
       author = EXCLUDED.author,
       avatar_url = EXCLUDED.avatar_url,
+      title = EXCLUDED.title,
       updated_at = NOW()
   `;
 
   try {
     await pool.query(query, [
+      repoId,
       prNumber,
       data.commit_sha,
       data.author || null,
-      data.author_avatar || null,
+      data.avatar_url || null,
+      data.title || null,
     ]);
   } catch (err) {
     console.error(
@@ -1074,6 +948,7 @@ async function upsertPipelineRun(prNumber, data) {
 
 // Update a status field on pipeline_runs and append a metadata-aware history entry
 async function updatePipelineStatus(
+  repoId,
   prNumber,
   statusField,
   statusValue,
@@ -1082,8 +957,11 @@ async function updatePipelineStatus(
 ) {
   try {
     // First, check the current status to avoid duplicate updates
-    const currentStatusQuery = `SELECT ${statusField} FROM pipeline_runs WHERE pr_number = $1`;
-    const currentResult = await pool.query(currentStatusQuery, [prNumber]);
+    const currentStatusQuery = `SELECT ${statusField} FROM pipeline_runs WHERE repo_id = $1 AND pr_number = $2`;
+    const currentResult = await pool.query(currentStatusQuery, [
+      repoId,
+      prNumber,
+    ]);
 
     let currentStatus = null;
     if (currentResult.rows.length > 0) {
@@ -1116,10 +994,18 @@ async function updatePipelineStatus(
       SET ${statusField} = $1,
           history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($2::jsonb),
           updated_at = NOW()
-      WHERE pr_number = $3
+      WHERE repo_id = $3 AND pr_number = $4
     `;
 
-    await pool.query(updateQuery, [statusValue, historyEntry, prNumber]);
+    await pool.query(updateQuery, [
+      statusValue,
+      historyEntry,
+      repoId,
+      prNumber,
+    ]);
+
+    // Also update PR history with state change for Flutter app consumption
+    await updatePRStateHistory(repoId, prNumber, statusValue, meta);
 
     // Only mark as changed if we actually updated something
     if (markChanged) markChanged();
@@ -1129,6 +1015,41 @@ async function updatePipelineStatus(
       error.message
     );
     throw error;
+  }
+}
+
+// Update PR history with state changes for Flutter app
+async function updatePRStateHistory(repoId, prNumber, state, meta = null) {
+  try {
+    const timestamp = new Date().toISOString();
+
+    // Create state history entry
+    const stateHistoryEntry = {
+      state: state,
+      at: timestamp,
+    };
+
+    if (meta && typeof meta === "object") {
+      stateHistoryEntry.meta = meta;
+    }
+
+    // Append to PR history
+    await pool.query(
+      `
+      UPDATE pull_requests 
+      SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($1::jsonb),
+          updated_at = NOW()
+      WHERE repo_id = $2 AND pr_number = $3
+    `,
+      [JSON.stringify(stateHistoryEntry), repoId, prNumber]
+    );
+
+    console.log(`📝 PR #${prNumber} state updated: ${state}`);
+  } catch (error) {
+    console.error(
+      `❌ Failed to update PR #${prNumber} state history:`,
+      error.message
+    );
   }
 }
 
