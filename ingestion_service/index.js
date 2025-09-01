@@ -98,7 +98,12 @@ function verifyGitHubSignature(payload, signature) {
 }
 
 // Discord backdoor - send all events as JSON files
-async function sendToDiscordBackdoor(eventType, payload, deliveryId) {
+async function sendToDiscordBackdoor(
+  eventType,
+  payload,
+  deliveryId,
+  detectedState = null
+) {
   if (!DISCORD_WEBHOOK_URL) return; // Skip if no Discord URL configured
 
   const timestamp = new Date().toISOString();
@@ -121,7 +126,13 @@ async function sendToDiscordBackdoor(eventType, payload, deliveryId) {
   const jsonContent = JSON.stringify(completeData, null, 2);
 
   try {
-    await sendDiscordFile(jsonContent, filename, eventType, deliveryId);
+    await sendDiscordFile(
+      jsonContent,
+      filename,
+      eventType,
+      deliveryId,
+      detectedState
+    );
     console.log(`📎 Discord backdoor: ${filename}`);
   } catch (error) {
     console.error(`❌ Discord backdoor failed:`, error.message);
@@ -129,7 +140,13 @@ async function sendToDiscordBackdoor(eventType, payload, deliveryId) {
 }
 
 // Helper function to send file to Discord
-async function sendDiscordFile(jsonContent, filename, eventType, deliveryId) {
+async function sendDiscordFile(
+  jsonContent,
+  filename,
+  eventType,
+  deliveryId,
+  detectedState = null
+) {
   const form = new FormData();
 
   form.append("files[0]", Buffer.from(jsonContent, "utf8"), {
@@ -137,8 +154,13 @@ async function sendDiscordFile(jsonContent, filename, eventType, deliveryId) {
     contentType: "application/json",
   });
 
+  let content = `📦 **GitHub ${eventType} Event**\n🆔 Delivery ID: \`${deliveryId}\`\n⏰ Timestamp: \`${new Date().toISOString()}\``;
+  if (detectedState) {
+    content += `\n🔍 Detected State: **${detectedState}**`;
+  }
+
   const messageContent = {
-    content: `📦 **GitHub ${eventType} Event**\n🆔 Delivery ID: \`${deliveryId}\`\n⏰ Timestamp: \`${new Date().toISOString()}\``,
+    content: content,
   };
 
   form.append("payload_json", JSON.stringify(messageContent));
@@ -169,6 +191,57 @@ async function sendDiscordFile(jsonContent, filename, eventType, deliveryId) {
     req.on("error", (error) => reject(error));
     form.pipe(req);
   });
+}
+
+// Determine a short human-friendly state string from incoming webhook payload
+function detectStateFromPayload(eventType, payload) {
+  try {
+    if (eventType === "workflow_run") {
+      const { action, workflow_run } = payload;
+      if (action === "requested" || action === "in_progress") return "building";
+      if (action === "completed")
+        return workflow_run.conclusion === "success"
+          ? "buildPassed"
+          : "buildFailed";
+    }
+
+    if (eventType === "workflow_job") {
+      const { action, workflow_job } = payload;
+      if (action === "queued" || action === "in_progress") return "building";
+      if (action === "completed")
+        return workflow_job.conclusion === "success"
+          ? "buildPassed"
+          : "buildFailed";
+    }
+
+    if (eventType === "check_run" || eventType === "check_suite") {
+      const obj = payload.check_run || payload.check_suite;
+      if (obj) {
+        if (obj.status === "in_progress" || obj.status === "queued")
+          return "building";
+        if (obj.conclusion)
+          return obj.conclusion === "success" ? "buildPassed" : "buildFailed";
+      }
+    }
+
+    if (eventType === "pull_request_review") {
+      const { action, review } = payload;
+      if (action === "submitted") {
+        if (review.state === "approved") return "approved";
+        if (review.state === "changes_requested") return "changes_requested";
+      }
+    }
+
+    if (eventType === "pull_request") {
+      const { action, pull_request } = payload;
+      if (action === "opened") return "open";
+      if (action === "closed") return pull_request.merged ? "merged" : "closed";
+    }
+
+    return null;
+  } catch (err) {
+    return null;
+  }
 }
 
 // Health check endpoint
@@ -203,8 +276,6 @@ app.post("/webhook", async (req, res) => {
   const eventType = req.get("X-GitHub-Event");
   const deliveryId = req.get("X-GitHub-Delivery");
 
-  console.log(`📥 Received ${eventType} event (delivery: ${deliveryId})`);
-
   // Verify signature
   if (!verifyGitHubSignature(JSON.stringify(req.body), signature)) {
     console.error("❌ Invalid webhook signature");
@@ -212,22 +283,31 @@ app.post("/webhook", async (req, res) => {
   }
 
   try {
-    // Send to Discord backdoor (async, don't wait)
-    if (DISCORD_WEBHOOK_URL) {
-      sendToDiscordBackdoor(eventType, req.body, deliveryId).catch((error) => {
-        console.error(`❌ Discord backdoor failed:`, error.message);
-      });
-    }
-
     // Insert raw event into database
     const eventId = await insertRawEvent(eventType, req.body, deliveryId);
 
     // Process specific events for FlowLens
-    await processEvent(eventType, req.body, eventId);
+    let stateChanged = false;
+    const markChanged = () => {
+      stateChanged = true;
+    };
+    await processEvent(eventType, req.body, eventId, markChanged);
 
-    console.log(
-      `✅ Successfully processed ${eventType} event (ID: ${eventId})`
-    );
+    // Send to Discord backdoor (async, don't wait)
+    if (DISCORD_WEBHOOK_URL) {
+      const detectedState = stateChanged
+        ? detectStateFromPayload(eventType, req.body)
+        : null;
+      sendToDiscordBackdoor(
+        eventType,
+        req.body,
+        deliveryId,
+        detectedState
+      ).catch((error) => {
+        console.error(`❌ Discord backdoor failed:`, error.message);
+      });
+    }
+
     res.status(200).json({
       success: true,
       eventId,
@@ -330,71 +410,39 @@ app.get("/db-status", async (req, res) => {
 });
 
 // Reset database - DEVELOPMENT ONLY
-app.post("/reset-db", async (req, res) => {
-  const { secret } = req.body;
+if (process.env.NODE_ENV !== "production") {
+  app.post("/reset-db", async (req, res) => {
+    const { secret } = req.body;
 
-  // Verify the secret matches GitHub webhook secret
-  if (!secret || secret !== WEBHOOK_SECRET) {
-    console.warn("❌ Invalid or missing secret for database reset");
-    return res.status(401).json({ error: "Invalid secret" });
-  }
-
-  try {
-    console.log("🔄 Resetting database...");
-
-    // Drop indexes first
-    const indexes = [
-      "idx_raw_events_processed",
-      "idx_raw_events_delivery",
-      "idx_insights_pr",
-      "idx_pipeline_runs_status",
-      "idx_pipeline_runs_pr",
-      "idx_pr_updated",
-      "idx_pr_author",
-    ];
-
-    for (const index of indexes) {
-      try {
-        await pool.query(`DROP INDEX IF EXISTS ${index}`);
-        console.log(`✅ Dropped index: ${index}`);
-      } catch (error) {
-        console.warn(`⚠️  Could not drop index ${index}:`, error.message);
-      }
+    if (!secret || secret !== WEBHOOK_SECRET) {
+      return res.status(401).json({ error: "Invalid secret" });
     }
 
-    // Drop tables in reverse order (to handle foreign keys)
-    const tables = ["insights", "pipeline_runs", "pull_requests", "raw_events"];
+    try {
+      console.log("🔄 Resetting database...");
 
-    for (const table of tables) {
-      try {
+      const tables = [
+        "insights",
+        "pipeline_runs",
+        "pull_requests",
+        "raw_events",
+      ];
+      for (const table of tables) {
         await pool.query(`DROP TABLE IF EXISTS ${table} CASCADE`);
-        console.log(`✅ Dropped table: ${table}`);
-      } catch (error) {
-        console.warn(`⚠️  Could not drop ${table}:`, error.message);
       }
+
+      await ensureSchemaExists();
+      res.json({ success: true, message: "Database reset complete" });
+    } catch (error) {
+      res
+        .status(500)
+        .json({ error: "Database reset failed", details: error.message });
     }
-
-    // Recreate schema
-    await ensureSchemaExists();
-
-    console.log("✅ Database reset complete");
-    res.json({
-      success: true,
-      message: "Database reset and schema applied successfully",
-    });
-  } catch (error) {
-    console.error("❌ Database reset failed:", error.message);
-    res.status(500).json({
-      error: "Database reset failed",
-      details: error.message,
-    });
-  }
-});
+  });
+}
 
 // Insert raw event into database
 async function insertRawEvent(eventType, payload, deliveryId) {
-  console.log(`💾 Inserting raw event: ${eventType} (delivery: ${deliveryId})`);
-
   const query = `
     INSERT INTO raw_events (event_type, payload, delivery_id, processed, received_at)
     VALUES ($1, $2, $3, $4, NOW())
@@ -409,9 +457,7 @@ async function insertRawEvent(eventType, payload, deliveryId) {
       false,
     ]);
 
-    const eventId = result.rows[0].id;
-    console.log(`✅ Raw event inserted successfully with ID: ${eventId}`);
-    return eventId;
+    return result.rows[0].id;
   } catch (error) {
     console.error(`❌ Failed to insert raw event:`, error.message);
     throw error;
@@ -419,41 +465,42 @@ async function insertRawEvent(eventType, payload, deliveryId) {
 }
 
 // Process events for FlowLens workflow tracking
-async function processEvent(eventType, payload, eventId) {
-  console.log(`🔄 Processing ${eventType} event (ID: ${eventId})...`);
-
+async function processEvent(eventType, payload, eventId, markChanged = null) {
   try {
     switch (eventType) {
       case "pull_request":
-        await processPullRequestEvent(payload, eventId);
+        await processPullRequestEvent(payload, eventId, markChanged);
         break;
 
       case "workflow_run":
-        await processWorkflowRunEvent(payload, eventId);
+        await processWorkflowRunEvent(payload, eventId, markChanged);
+        break;
+
+      case "workflow_job":
+        await processWorkflowJobEvent(payload, eventId, markChanged);
         break;
 
       case "check_run":
-        await processCheckRunEvent(payload, eventId);
+        await processCheckRunEvent(payload, eventId, markChanged);
         break;
 
       case "check_suite":
-        await processCheckSuiteEvent(payload, eventId);
+        await processCheckSuiteEvent(payload, eventId, markChanged);
         break;
 
       case "pull_request_review":
-        await processPullRequestReviewEvent(payload, eventId);
+        await processPullRequestReviewEvent(payload, eventId, markChanged);
         break;
 
       case "push":
-        await processPushEvent(payload, eventId);
+        await processPushEvent(payload, eventId, markChanged);
         break;
 
       case "ping":
-        console.log("🏓 Ping event received - webhook is working!");
         break;
 
       default:
-        console.log(`ℹ️  Event type ${eventType} - stored but not processed`);
+        break;
     }
 
     // Mark event as processed
@@ -461,10 +508,6 @@ async function processEvent(eventType, payload, eventId) {
       true,
       eventId,
     ]);
-
-    console.log(
-      `✅ Event ${eventType} (ID: ${eventId}) processed successfully`
-    );
   } catch (error) {
     console.error(`❌ Error processing ${eventType} event:`, error.message);
     throw error;
@@ -472,10 +515,8 @@ async function processEvent(eventType, payload, eventId) {
 }
 
 // Process pull request events
-async function processPullRequestEvent(payload, eventId) {
+async function processPullRequestEvent(payload, eventId, markChanged = null) {
   const { action, pull_request, repository } = payload;
-
-  console.log(`📋 PR #${pull_request.number} - ${action}`);
 
   // Always extract and upsert PR data for any action
   if (
@@ -562,126 +603,216 @@ async function processPullRequestEvent(payload, eventId) {
   // Handle specific state transitions
   if (action === "closed" && pull_request.merged) {
     // PR was merged
-    await updatePipelineStatus(pull_request.number, "status_merge", "merged");
+    await updatePipelineStatus(
+      pull_request.number,
+      "status_merge",
+      "merged",
+      null,
+      markChanged
+    );
   } else if (action === "closed" && !pull_request.merged) {
     // PR was closed without merging
-    await updatePipelineStatus(pull_request.number, "status_merge", "closed");
+    await updatePipelineStatus(
+      pull_request.number,
+      "status_merge",
+      "closed",
+      null,
+      markChanged
+    );
   }
 }
 
 // Process workflow run events (CI/CD builds)
-async function processWorkflowRunEvent(payload, eventId) {
+async function processWorkflowRunEvent(payload, eventId, markChanged = null) {
   const { action, workflow_run } = payload;
-
-  console.log(
-    `🔧 Workflow "${workflow_run.name}" - ${action} (${
-      workflow_run.conclusion || workflow_run.status
-    })`
-  );
 
   // Find associated PR
   const prNumbers = workflow_run.pull_requests?.map((pr) => pr.number) || [];
 
   for (const prNumber of prNumbers) {
+    // Normalize build status to match Flutter PRStatus values
     if (action === "requested" || action === "in_progress") {
-      await updatePipelineStatus(prNumber, "status_build", "running");
+      await updatePipelineStatus(
+        prNumber,
+        "status_build",
+        "building",
+        {
+          source: "workflow_run",
+          status: workflow_run.status,
+          run_url: workflow_run.html_url,
+        },
+        markChanged
+      );
     } else if (action === "completed") {
       const status =
-        workflow_run.conclusion === "success" ? "passed" : "failed";
-      await updatePipelineStatus(prNumber, "status_build", status);
+        workflow_run.conclusion === "success" ? "buildPassed" : "buildFailed";
+      await updatePipelineStatus(
+        prNumber,
+        "status_build",
+        status,
+        {
+          source: "workflow_run",
+          conclusion: workflow_run.conclusion,
+          run_url: workflow_run.html_url,
+        },
+        markChanged
+      );
     }
   }
 }
 
-// Process check run events
-async function processCheckRunEvent(payload, eventId) {
-  const { action, check_run } = payload;
+// Process individual workflow job events (queued, in_progress, completed)
+async function processWorkflowJobEvent(payload, eventId, markChanged = null) {
+  const { action, workflow_job } = payload;
 
-  console.log(
-    `✅ Check run "${check_run.name}" - ${action} (${
-      check_run.conclusion || check_run.status
-    })`
-  );
+  // Try to find associated PR numbers by inspecting related run (best-effort)
+  // workflow_job doesn't always include pull_requests directly, so we look up the run_id in workflow_runs table
+  // Fallback: if head_branch contains PR branch naming we won't rely on that here; prefer run -> pull_requests if available upstream.
+  const prNumbers = [];
+  // If payload contains run_url we may have related run data in the same webhook flow; some jobs include head_sha which matches PRs
+  // Best-effort: query pipeline_runs by commit_sha matching head_sha
+  try {
+    if (workflow_job.head_sha) {
+      const res = await pool.query(
+        "SELECT pr_number FROM pipeline_runs WHERE commit_sha = $1",
+        [workflow_job.head_sha]
+      );
+      for (const r of res.rows) prNumbers.push(r.pr_number);
+    }
+  } catch (err) {
+    console.warn(
+      "\u26a0\ufe0f Could not lookup PR by head_sha for workflow_job:",
+      err.message
+    );
+  }
+
+  for (const prNumber of prNumbers) {
+    if (action === "queued" || action === "in_progress") {
+      await updatePipelineStatus(
+        prNumber,
+        "status_build",
+        "building",
+        {
+          source: "workflow_job",
+          job_name: workflow_job.name,
+          status: workflow_job.status,
+          run_url: workflow_job.html_url,
+        },
+        markChanged
+      );
+    } else if (action === "completed") {
+      const status =
+        workflow_job.conclusion === "success" ? "buildPassed" : "buildFailed";
+      await updatePipelineStatus(
+        prNumber,
+        "status_build",
+        status,
+        {
+          source: "workflow_job",
+          job_name: workflow_job.name,
+          conclusion: workflow_job.conclusion,
+          html_url: workflow_job.html_url,
+        },
+        markChanged
+      );
+    }
+  }
+}
+// Process check run events
+async function processCheckRunEvent(payload, eventId, markChanged = null) {
+  const { action, check_run } = payload;
 
   // Find associated PR
   const prNumbers = check_run.pull_requests?.map((pr) => pr.number) || [];
 
   for (const prNumber of prNumbers) {
     if (action === "created" || action === "rerequested") {
-      await updatePipelineStatus(prNumber, "status_build", "running");
+      await updatePipelineStatus(
+        prNumber,
+        "status_build",
+        "running",
+        null,
+        markChanged
+      );
     } else if (action === "completed") {
       const status = check_run.conclusion === "success" ? "passed" : "failed";
-      await updatePipelineStatus(prNumber, "status_build", status);
+      await updatePipelineStatus(
+        prNumber,
+        "status_build",
+        status,
+        null,
+        markChanged
+      );
     }
   }
 }
 
 // Process check suite events
-async function processCheckSuiteEvent(payload, eventId) {
+async function processCheckSuiteEvent(payload, eventId, markChanged = null) {
   const { action, check_suite } = payload;
-
-  console.log(
-    `📦 Check suite - ${action} (${
-      check_suite.conclusion || check_suite.status
-    })`
-  );
 
   // Find associated PR
   const prNumbers = check_suite.pull_requests?.map((pr) => pr.number) || [];
 
   for (const prNumber of prNumbers) {
     if (action === "requested" || action === "rerequested") {
-      await updatePipelineStatus(prNumber, "status_build", "running");
+      await updatePipelineStatus(
+        prNumber,
+        "status_build",
+        "running",
+        null,
+        markChanged
+      );
     } else if (action === "completed") {
       const status = check_suite.conclusion === "success" ? "passed" : "failed";
-      await updatePipelineStatus(prNumber, "status_build", status);
+      await updatePipelineStatus(
+        prNumber,
+        "status_build",
+        status,
+        null,
+        markChanged
+      );
     }
   }
 }
 
 // Process pull request review events
-async function processPullRequestReviewEvent(payload, eventId) {
+async function processPullRequestReviewEvent(
+  payload,
+  eventId,
+  markChanged = null
+) {
   const { action, review, pull_request } = payload;
-
-  console.log(
-    `👀 PR #${pull_request.number} review - ${action} (${review.state})`
-  );
 
   if (action === "submitted") {
     if (review.state === "approved") {
       await updatePipelineStatus(
         pull_request.number,
         "status_approval",
-        "approved"
+        "approved",
+        null,
+        markChanged
       );
     } else if (review.state === "changes_requested") {
       await updatePipelineStatus(
         pull_request.number,
         "status_approval",
-        "changes_requested"
+        "changes_requested",
+        null,
+        markChanged
       );
     }
   }
 }
 
 // Process push events
-async function processPushEvent(payload, eventId) {
-  const { ref, repository, commits } = payload;
-
-  console.log(`📤 Push to ${ref} with ${commits.length} commits`);
-
+async function processPushEvent(payload, eventId, markChanged = null) {
   // For pushes to main/master that might affect PRs
-  if (ref === "refs/heads/main" || ref === "refs/heads/master") {
-    console.log("ℹ️  Push to main branch - may trigger PR updates");
-  }
+  // No specific processing needed for now
 }
 
 // Database helper functions
 async function upsertPullRequest(prData) {
-  console.log(
-    `💾 Upserting PR #${prData.pr_number}: ${prData.title} (${prData.state})`
-  );
-
   const query = `
     INSERT INTO pull_requests (
       pr_number, title, description, author, author_avatar, commit_sha,
@@ -733,26 +864,18 @@ async function upsertPullRequest(prData) {
       prData.state || "open",
     ]);
 
-    console.log(`✅ PR #${prData.pr_number} upserted successfully`);
+    // Append history
+    const historyEntry = JSON.stringify({
+      at: new Date().toISOString(),
+      title: prData.title,
+      state: prData.state || "open",
+      commit_sha: prData.commit_sha,
+    });
 
-    // Append a compact history entry to pull_requests.history
-    try {
-      const historyEntry = JSON.stringify({
-        at: new Date().toISOString(),
-        title: prData.title,
-        state: prData.state || "open",
-        commit_sha: prData.commit_sha,
-      });
-
-      await pool.query(
-        `UPDATE pull_requests SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($1::jsonb) WHERE pr_number = $2`,
-        [historyEntry, prData.pr_number]
-      );
-
-      console.log(`📝 PR #${prData.pr_number} history updated`);
-    } catch (err) {
-      console.error(`❌ Failed to append PR history:`, err.message);
-    }
+    await pool.query(
+      `UPDATE pull_requests SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($1::jsonb) WHERE pr_number = $2`,
+      [historyEntry, prData.pr_number]
+    );
   } catch (error) {
     console.error(
       `❌ Failed to upsert PR #${prData.pr_number}:`,
@@ -763,10 +886,6 @@ async function upsertPullRequest(prData) {
 }
 
 async function upsertPipelineRun(prNumber, data) {
-  console.log(
-    `💾 Upserting pipeline run for PR #${prNumber} (commit: ${data.commit_sha})`
-  );
-
   const query = `
     INSERT INTO pipeline_runs (
       pr_number, commit_sha, author, avatar_url, updated_at
@@ -783,51 +902,72 @@ async function upsertPipelineRun(prNumber, data) {
     await pool.query(query, [
       prNumber,
       data.commit_sha,
-      data.author,
-      data.author_avatar,
+      data.author || null,
+      data.author_avatar || null,
     ]);
-
-    console.log(`✅ Pipeline run for PR #${prNumber} upserted successfully`);
-
-    // Update PR status if provided
-    if (data.status_pr) {
-      await updatePipelineStatus(prNumber, "status_pr", data.status_pr);
-    }
-  } catch (error) {
+  } catch (err) {
     console.error(
       `❌ Failed to upsert pipeline run for PR #${prNumber}:`,
-      error.message
+      err.message
     );
-    throw error;
+    throw err;
   }
 }
 
-async function updatePipelineStatus(prNumber, statusField, statusValue) {
-  console.log(`📊 Updating PR #${prNumber} ${statusField} to: ${statusValue}`);
-
-  const timestamp = new Date().toISOString();
-
-  // Update the specific status field and append to history JSONB
-  const query = `
-    UPDATE pipeline_runs
-    SET ${statusField} = $1,
-        history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($2::jsonb),
-        updated_at = NOW()
-    WHERE pr_number = $3
-  `;
-
-  const historyEntry = JSON.stringify({
-    field: statusField,
-    value: statusValue,
-    at: timestamp,
-  });
-
+// Update a status field on pipeline_runs and append a metadata-aware history entry
+async function updatePipelineStatus(
+  prNumber,
+  statusField,
+  statusValue,
+  meta = null,
+  markChanged = null
+) {
   try {
-    await pool.query(query, [statusValue, historyEntry, prNumber]);
-    console.log(`✅ PR #${prNumber} ${statusField} updated to: ${statusValue}`);
+    // First, check the current status to avoid duplicate updates
+    const currentStatusQuery = `SELECT ${statusField} FROM pipeline_runs WHERE pr_number = $1`;
+    const currentResult = await pool.query(currentStatusQuery, [prNumber]);
+
+    let currentStatus = null;
+    if (currentResult.rows.length > 0) {
+      currentStatus = currentResult.rows[0][statusField];
+    }
+
+    // If status hasn't changed, don't update
+    if (currentStatus === statusValue) {
+      return; // No change needed, skip everything
+    }
+
+    const timestamp = new Date().toISOString();
+
+    // Build a richer history entry including optional metadata
+    const historyObj = {
+      field: statusField,
+      value: statusValue,
+      at: timestamp,
+    };
+
+    if (meta && typeof meta === "object") {
+      historyObj.meta = meta;
+    }
+
+    const historyEntry = JSON.stringify(historyObj);
+
+    // Update the specific status field and append to history JSONB
+    const updateQuery = `
+      UPDATE pipeline_runs
+      SET ${statusField} = $1,
+          history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($2::jsonb),
+          updated_at = NOW()
+      WHERE pr_number = $3
+    `;
+
+    await pool.query(updateQuery, [statusValue, historyEntry, prNumber]);
+
+    // Only mark as changed if we actually updated something
+    if (markChanged) markChanged();
   } catch (error) {
     console.error(
-      `❌ Failed to update PR #${prNumber} ${statusField}:`,
+      `Failed to update PR #${prNumber} ${statusField}:`,
       error.message
     );
     throw error;
