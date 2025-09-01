@@ -2,6 +2,9 @@ const { Pool } = require("pg");
 const fs = require("fs");
 const path = require("path");
 
+// Load environment variables from .env file
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+
 // Database configuration
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
