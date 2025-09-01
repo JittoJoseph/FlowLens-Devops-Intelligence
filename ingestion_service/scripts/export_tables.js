@@ -11,8 +11,13 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === "production" ? true : false,
 });
 
-// Tables to export (excluding raw_events)
-const TABLES_TO_EXPORT = ["pull_requests", "pipeline_runs", "insights"];
+// Tables to export with their respective timestamp columns
+const TABLES_TO_EXPORT = [
+  { name: "pull_requests", timestampColumn: "created_at" },
+  { name: "pipeline_runs", timestampColumn: "created_at" },
+  { name: "insights", timestampColumn: "created_at" },
+  { name: "raw_events", timestampColumn: "received_at" },
+];
 
 async function exportTables() {
   try {
@@ -29,11 +34,12 @@ async function exportTables() {
     fs.mkdirSync(outputDir, { recursive: true });
 
     // Export each table
-    for (const tableName of TABLES_TO_EXPORT) {
+    for (const tableConfig of TABLES_TO_EXPORT) {
+      const { name: tableName, timestampColumn } = tableConfig;
       console.log(`Exporting ${tableName}...`);
 
       const result = await pool.query(
-        `SELECT * FROM ${tableName} ORDER BY created_at DESC`
+        `SELECT * FROM ${tableName} ORDER BY ${timestampColumn} DESC`
       );
       const data = {
         table: tableName,
