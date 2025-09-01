@@ -85,7 +85,7 @@ CREATE TABLE pull_requests (
     base_branch TEXT DEFAULT 'master',                    -- Target branch (master/main/develop)
     pr_url TEXT,                                         -- GitHub PR URL for easy access
     commit_urls JSONB DEFAULT '[]'::jsonb,               -- Array of commit URLs
-    files_changed JSONB DEFAULT '[]'::jsonb,             -- Array of changed file names
+    files_changed JSONB DEFAULT '[]'::jsonb,             -- Array of changed file details with diffs
     additions INT DEFAULT 0,
     deletions INT DEFAULT 0,
     changed_files INT DEFAULT 0,                         -- Number of files changed
