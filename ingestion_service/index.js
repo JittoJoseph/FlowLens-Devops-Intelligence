@@ -43,6 +43,18 @@ async function ensureSchemaExists() {
 
     if (missing.length === 0) {
       console.log("✅ All expected tables exist");
+
+      // Still ensure triggers are applied
+      try {
+        const triggerPath = path.join(__dirname, "trigger.sql");
+        if (fs.existsSync(triggerPath)) {
+          const triggerSql = fs.readFileSync(triggerPath, "utf8");
+          await pool.query(triggerSql);
+          console.log("✅ trigger.sql applied successfully");
+        }
+      } catch (triggerErr) {
+        console.warn("⚠️ Trigger application warning:", triggerErr.message);
+      }
       return;
     }
 
@@ -76,8 +88,25 @@ async function ensureSchemaExists() {
       console.log("✅ trigger.sql applied successfully");
     }
   } catch (err) {
-    console.error("❌ Failed to ensure schema exists:", err.message);
-    throw err;
+    // Handle case where schema already exists
+    if (err.message.includes("already exists")) {
+      console.log("⚠️ Some schema objects already exist, continuing...");
+
+      // Still try to apply triggers
+      try {
+        const triggerPath = path.join(__dirname, "trigger.sql");
+        if (fs.existsSync(triggerPath)) {
+          const triggerSql = fs.readFileSync(triggerPath, "utf8");
+          await pool.query(triggerSql);
+          console.log("✅ trigger.sql applied successfully");
+        }
+      } catch (triggerErr) {
+        console.warn("⚠️ Trigger application warning:", triggerErr.message);
+      }
+    } else {
+      console.error("❌ Failed to ensure schema exists:", err.message);
+      throw err;
+    }
   }
 }
 
@@ -1054,15 +1083,29 @@ async function updatePRStateHistory(repoId, prNumber, state, meta = null) {
 }
 
 // Graceful shutdown
+let shuttingDown = false;
+
 process.on("SIGTERM", async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log("🛑 Received SIGTERM, shutting down gracefully...");
-  await pool.end();
+  try {
+    await pool.end();
+  } catch (err) {
+    console.error("Error closing pool:", err.message);
+  }
   process.exit(0);
 });
 
 process.on("SIGINT", async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log("🛑 Received SIGINT, shutting down gracefully...");
-  await pool.end();
+  try {
+    await pool.end();
+  } catch (err) {
+    console.error("Error closing pool:", err.message);
+  }
   process.exit(0);
 });
 
@@ -1082,10 +1125,12 @@ process.on("unhandledRejection", (reason, promise) => {
 async function startServer() {
   try {
     // Ensure DB connection works
+    console.log("🔌 Testing database connection...");
     await pool.query("SELECT NOW()");
     console.log("✅ Database connected successfully");
 
     // Ensure tables exist (apply schema.sql if missing)
+    console.log("🔍 Checking database schema...");
     await ensureSchemaExists();
 
     app.listen(PORT, () => {
@@ -1095,6 +1140,16 @@ async function startServer() {
     });
   } catch (err) {
     console.error("❌ Failed to start server:", err.message);
+    console.error("Stack trace:", err.stack);
+
+    // Don't exit immediately, try to clean up
+    try {
+      if (!shuttingDown) {
+        await pool.end();
+      }
+    } catch (poolErr) {
+      console.error("Error closing pool during cleanup:", poolErr.message);
+    }
     process.exit(1);
   }
 }
