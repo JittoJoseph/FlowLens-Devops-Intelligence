@@ -8,37 +8,38 @@ from app.routes import api
 from app.data.configs.logging_configs import setup_logging
 from app.data.database.core_db import connect as db_connect, disconnect as db_disconnect
 from app.services.websocket_manager import websocket_manager
-from app.services.event_poller import poll_for_events, stop_poller
+# --- Import the new listener and its stop function ---
+from app.services.db_listener import listen_for_db_notifications, stop_listener
 
-poller_task = None
+# --- This will hold our new listener task ---
+listener_task = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global poller_task
+    global listener_task
     setup_logging()
     logger.info("Starting up application...")
     await db_connect()
 
-    # --- Start the new poller task ---
-    poller_task = asyncio.create_task(poll_for_events())
-    logger.info("Background event poller started.")
+    # --- Start the new, efficient DB listener task ---
+    listener_task = asyncio.create_task(listen_for_db_notifications())
+    logger.info("Background database notification listener started.")
 
     logger.success("Application startup complete!")
     yield
     
     logger.info("Shutting down application...")
-    if poller_task:
-        # --- Signal the new poller to stop ---
-        stop_poller()
-        poller_task.cancel()
+    if listener_task:
+        # --- Signal the listener to stop ---
+        stop_listener()
+        listener_task.cancel()
         try:
-            await poller_task
+            await listener_task
         except asyncio.CancelledError:
-            logger.warning("Event poller task cancelled successfully.")
+            logger.warning("DB listener task cancelled successfully.")
     
     await db_disconnect()
     logger.success("Application shutdown complete!")
-
 
 
 app = FastAPI(
@@ -54,7 +55,9 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket_manager.connect(websocket)
     try:
         while True:
-            await websocket.receive_text() # Keep connection alive
+            # We can set a timeout to periodically check connection state if needed
+            # For now, just waiting is fine.
+            await websocket.receive_text()
     except WebSocketDisconnect:
         websocket_manager.disconnect(websocket)
 
