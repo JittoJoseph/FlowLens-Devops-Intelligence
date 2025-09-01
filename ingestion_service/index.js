@@ -193,7 +193,11 @@ async function sendDiscordFile(
     contentType: "application/json",
   });
 
-  const content = `📦 GitHub ${eventType} Event - ${deliveryId}`;
+  let content = `📦 **GitHub ${eventType} Event**\n🆔 Delivery ID: \`${deliveryId}\`\n⏰ Timestamp: \`${new Date().toISOString()}\``;
+  if (detectedState) {
+    content += `\n🔍 Detected State: **${detectedState}**`;
+  }
+
   const messageContent = { content };
 
   form.append("payload_json", JSON.stringify(messageContent));
@@ -261,6 +265,16 @@ function detectStateFromPayload(eventType, payload) {
         return workflow_job.conclusion === "success"
           ? "buildPassed"
           : "buildFailed";
+      }
+    }
+
+    if (eventType === "check_run" || eventType === "check_suite") {
+      const obj = payload.check_run || payload.check_suite;
+      if (obj) {
+        if (obj.status === "in_progress") return "building";
+        if (obj.status === "completed") {
+          return obj.conclusion === "success" ? "buildPassed" : "buildFailed";
+        }
       }
     }
 
@@ -604,15 +618,25 @@ async function fetchChangedFiles(repositoryFullName, prNumber) {
 
     const files = await response.json();
 
-    // Enhanced processing - include patch data for detailed file changes
-    return files.map((file) => ({
-      filename: file.filename,
-      status: file.status,
-      additions: file.additions || 0,
-      deletions: file.deletions || 0,
-      changes: file.changes || 0,
-      patch: file.patch || null, // Include the patch data for diff information
-    }));
+    // Filter and process files - exclude large files or binaries for performance
+    return files
+      .filter((file) => {
+        // Skip very large files (over 1MB) or binary files
+        return (
+          file.additions + file.deletions < 10000 &&
+          !file.filename.match(
+            /\.(png|jpg|jpeg|gif|ico|pdf|zip|tar|gz|exe|dll)$/i
+          )
+        );
+      })
+      .map((file) => ({
+        filename: file.filename,
+        status: file.status,
+        additions: file.additions || 0,
+        deletions: file.deletions || 0,
+        changes: file.changes || 0,
+        patch: file.patch || null,
+      }));
   } catch (error) {
     console.warn(`⚠️ Error fetching files for PR #${prNumber}:`, error.message);
     return [];
@@ -635,8 +659,33 @@ async function processEvent(eventType, payload, repoId, markChanged = null) {
         await processPullRequestReviewEvent(payload, repoId, markChanged);
         break;
 
+      case "workflow_job":
+        await processWorkflowJobEvent(payload, repoId, markChanged);
+        break;
+
+      case "check_run":
+        await processCheckRunEvent(payload, repoId, markChanged);
+        break;
+
+      case "check_suite":
+        await processCheckSuiteEvent(payload, repoId, markChanged);
+        break;
+
+      case "pull_request_review_comment":
+        await processPullRequestReviewCommentEvent(
+          payload,
+          repoId,
+          markChanged
+        );
+        break;
+
+      case "push":
+        await processPushEvent(payload, repoId, markChanged);
+        break;
+
       default:
-        // Ignore other events
+        // Log unhandled events for debugging
+        console.log(`ℹ️  Unhandled event type: ${eventType}`);
         break;
     }
   } catch (error) {
@@ -669,11 +718,24 @@ async function processPullRequestEvent(payload, repoId, markChanged = null) {
       commitUrls.push(pull_request.commits_url);
     }
 
-    // Extract labels, assignees, and reviewers
-    const labels = pull_request.labels?.map((label) => label.name) || [];
-    const assignees = pull_request.assignees?.map((user) => user.login) || [];
+    // Extract labels, assignees, and reviewers with more detail
+    const labels =
+      pull_request.labels?.map((label) => ({
+        name: label.name,
+        color: label.color,
+      })) || [];
+
+    const assignees =
+      pull_request.assignees?.map((assignee) => ({
+        login: assignee.login,
+        avatar_url: assignee.avatar_url,
+      })) || [];
+
     const reviewers =
-      pull_request.requested_reviewers?.map((user) => user.login) || [];
+      pull_request.requested_reviewers?.map((reviewer) => ({
+        login: reviewer.login,
+        avatar_url: reviewer.avatar_url,
+      })) || [];
 
     // Determine PR state and dates
     let prState = "open";
@@ -786,6 +848,16 @@ async function processWorkflowRunEvent(payload, repoId, markChanged = null) {
   const prNumbers = workflow_run.pull_requests?.map((pr) => pr.number) || [];
 
   for (const prNumber of prNumbers) {
+    // Ensure pipeline run record exists before updating (in case we get workflow events before PR events)
+    await upsertPipelineRun(repoId, prNumber, {
+      commit_sha: workflow_run.head_sha,
+      author: workflow_run.actor?.login || "unknown",
+      avatar_url: workflow_run.actor?.avatar_url || null,
+      title:
+        workflow_run.display_title ||
+        `Workflow run #${workflow_run.run_number}`,
+    });
+
     // Normalize build status to match Flutter PRStatus values
     if (action === "requested" || action === "in_progress") {
       await updatePipelineStatus(
@@ -830,6 +902,14 @@ async function processPullRequestReviewEvent(
   const { action, review, pull_request } = payload;
 
   if (action === "submitted") {
+    // Ensure pipeline run record exists before updating (in case we get review events before PR events)
+    await upsertPipelineRun(repoId, pull_request.number, {
+      commit_sha: pull_request.head?.sha || "unknown",
+      author: pull_request.user?.login || "unknown",
+      avatar_url: pull_request.user?.avatar_url || null,
+      title: pull_request.title || `PR #${pull_request.number}`,
+    });
+
     if (review.state === "approved") {
       await updatePipelineStatus(
         repoId,
@@ -860,12 +940,218 @@ async function processPullRequestReviewEvent(
   }
 }
 
+// Process workflow job events (individual jobs within workflow runs)
+// Process pull request review comment events (comments on specific lines)
+async function processPullRequestReviewCommentEvent(
+  payload,
+  repoId,
+  markChanged = null
+) {
+  const { action, comment, pull_request } = payload;
+
+  if (action === "created") {
+    console.log(
+      `💬 Review comment added to PR #${pull_request.number} by ${comment.user.login}`
+    );
+
+    // Could potentially track detailed review feedback here
+    // For now, we let pull_request_review events handle the main approval tracking
+  }
+}
+
+// Process push events (for tracking commits to PR branches)
+async function processPushEvent(payload, repoId, markChanged = null) {
+  const { ref, commits, pusher, repository } = payload;
+
+  // Skip if this is a push to the default branch (not a PR branch)
+  if (ref === `refs/heads/${repository.default_branch}`) {
+    return;
+  }
+
+  // Extract branch name from ref (refs/heads/branch-name)
+  const branchName = ref.replace("refs/heads/", "");
+
+  // Log for debugging
+  console.log(
+    `📝 Push event on branch: ${branchName}, commits: ${commits?.length || 0}`
+  );
+
+  // Note: GitHub doesn't provide PR number in push events
+  // We could potentially find associated PRs by branch name, but that requires additional API calls
+  // For now, we'll just log the push event and let workflow_run events handle the pipeline updates
+}
+
+// Process workflow job events (individual jobs within a workflow run)
+async function processWorkflowJobEvent(payload, repoId, markChanged = null) {
+  const { action, workflow_job } = payload;
+
+  // Try to find associated PR numbers by matching head_sha with existing pipeline runs
+  const prNumbers = [];
+  try {
+    if (workflow_job.head_sha) {
+      const result = await pool.query(
+        "SELECT pr_number FROM pipeline_runs WHERE repo_id = $1 AND commit_sha = $2",
+        [repoId, workflow_job.head_sha]
+      );
+      prNumbers.push(...result.rows.map((row) => row.pr_number));
+    }
+  } catch (err) {
+    console.warn(
+      "⚠️ Could not lookup PR by head_sha for workflow_job:",
+      err.message
+    );
+  }
+
+  // Log the job status for debugging
+  console.log(
+    `🔧 Workflow job "${workflow_job.name}" ${action} - Status: ${workflow_job.status}, Conclusion: ${workflow_job.conclusion}`
+  );
+
+  for (const prNumber of prNumbers) {
+    if (action === "queued" || action === "in_progress") {
+      await updatePipelineStatus(
+        repoId,
+        prNumber,
+        "status_build",
+        "building",
+        {
+          source: "workflow_job",
+          job_name: workflow_job.name,
+          job_url: workflow_job.html_url,
+          status: workflow_job.status,
+        },
+        markChanged
+      );
+    } else if (action === "completed") {
+      const status =
+        workflow_job.conclusion === "success" ? "buildPassed" : "buildFailed";
+      await updatePipelineStatus(
+        repoId,
+        prNumber,
+        "status_build",
+        status,
+        {
+          source: "workflow_job",
+          job_name: workflow_job.name,
+          job_url: workflow_job.html_url,
+          conclusion: workflow_job.conclusion,
+        },
+        markChanged
+      );
+    }
+  }
+
+  // Enhanced logging for debugging
+  if (action === "completed") {
+    const status = workflow_job.conclusion === "success" ? "✅" : "❌";
+    console.log(
+      `${status} Job "${workflow_job.name}" ${workflow_job.conclusion} (${workflow_job.status})`
+    );
+  }
+}
+
+// Process check run events
+async function processCheckRunEvent(payload, repoId, markChanged = null) {
+  const { action, check_run } = payload;
+
+  // Find associated PR
+  const prNumbers = check_run.pull_requests?.map((pr) => pr.number) || [];
+
+  for (const prNumber of prNumbers) {
+    // Ensure pipeline run record exists
+    await upsertPipelineRun(repoId, prNumber, {
+      commit_sha: check_run.head_sha,
+      author: check_run.check_suite?.head_commit?.author?.name || "unknown",
+      avatar_url: null,
+      title: `Check run: ${check_run.name}`,
+    });
+
+    if (action === "created" || action === "rerequested") {
+      await updatePipelineStatus(
+        repoId,
+        prNumber,
+        "status_build",
+        "building",
+        {
+          source: "check_run",
+          check_name: check_run.name,
+          check_url: check_run.html_url,
+        },
+        markChanged
+      );
+    } else if (action === "completed") {
+      const status =
+        check_run.conclusion === "success" ? "buildPassed" : "buildFailed";
+      await updatePipelineStatus(
+        repoId,
+        prNumber,
+        "status_build",
+        status,
+        {
+          source: "check_run",
+          conclusion: check_run.conclusion,
+          check_name: check_run.name,
+          check_url: check_run.html_url,
+        },
+        markChanged
+      );
+    }
+  }
+}
+
+// Process check suite events
+async function processCheckSuiteEvent(payload, repoId, markChanged = null) {
+  const { action, check_suite } = payload;
+
+  // Find associated PR
+  const prNumbers = check_suite.pull_requests?.map((pr) => pr.number) || [];
+
+  for (const prNumber of prNumbers) {
+    // Ensure pipeline run record exists
+    await upsertPipelineRun(repoId, prNumber, {
+      commit_sha: check_suite.head_sha,
+      author: check_suite.head_commit?.author?.name || "unknown",
+      avatar_url: null,
+      title: `Check suite`,
+    });
+
+    if (action === "requested" || action === "rerequested") {
+      await updatePipelineStatus(
+        repoId,
+        prNumber,
+        "status_build",
+        "building",
+        {
+          source: "check_suite",
+          suite_url: check_suite.url,
+        },
+        markChanged
+      );
+    } else if (action === "completed") {
+      const status =
+        check_suite.conclusion === "success" ? "buildPassed" : "buildFailed";
+      await updatePipelineStatus(
+        repoId,
+        prNumber,
+        "status_build",
+        status,
+        {
+          source: "check_suite",
+          conclusion: check_suite.conclusion,
+          suite_url: check_suite.url,
+        },
+        markChanged
+      );
+    }
+  }
+}
+
 // Database helper functions
 async function upsertPullRequest(prData, repoId) {
   const query = `
     INSERT INTO pull_requests (
       repo_id, pr_number, title, description, author, author_avatar, commit_sha,
-      branch_name, base_branch, html_url, commit_urls, files_changed, additions, deletions,
+      branch_name, base_branch, pr_url, commit_urls, files_changed, additions, deletions,
       changed_files, commits_count, labels, assignees, reviewers, is_draft, state,
       merged, merged_at, closed_at, created_at, updated_at
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW())
@@ -876,7 +1162,7 @@ async function upsertPullRequest(prData, repoId) {
       commit_sha = EXCLUDED.commit_sha,
       branch_name = EXCLUDED.branch_name,
       base_branch = EXCLUDED.base_branch,
-      html_url = EXCLUDED.html_url,
+      pr_url = EXCLUDED.pr_url,
       commit_urls = EXCLUDED.commit_urls,
       files_changed = EXCLUDED.files_changed,
       additions = EXCLUDED.additions,
