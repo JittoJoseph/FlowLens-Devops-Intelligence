@@ -16,6 +16,30 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === "production" ? true : false,
 });
 
+// Apply database triggers for real-time notifications
+async function ensureTriggersExist() {
+  try {
+    console.log("Applying database triggers...");
+
+    const triggerPath = path.join(__dirname, "trigger.sql");
+
+    if (!fs.existsSync(triggerPath)) {
+      console.warn("trigger.sql not found, skipping trigger creation");
+      return;
+    }
+
+    const triggerSql = fs.readFileSync(triggerPath, "utf8");
+
+    // Apply the trigger SQL (contains function and trigger creation)
+    await pool.query(triggerSql);
+
+    console.log("Database triggers applied successfully");
+  } catch (err) {
+    console.error("Failed to apply database triggers:", err.message);
+    // Don't throw - triggers are optional for basic functionality
+  }
+}
+
 // Ensure database schema exists: if any required table is missing, apply schema.sql
 async function ensureSchemaExists() {
   const expected = ["raw_events", "insights", "pipeline_runs", "pull_requests"];
@@ -31,6 +55,8 @@ async function ensureSchemaExists() {
 
     if (missing.length === 0) {
       console.log("✅ All expected tables exist");
+      // Even if tables exist, ensure triggers are applied
+      await ensureTriggersExist();
       return;
     }
 
@@ -55,6 +81,9 @@ async function ensureSchemaExists() {
     await pool.query(schemaSql);
 
     console.log("✅ schema.sql applied successfully");
+
+    // Apply triggers after schema creation
+    await ensureTriggersExist();
   } catch (err) {
     console.error("❌ Failed to ensure schema exists:", err.message);
     throw err;
@@ -395,9 +424,32 @@ app.get("/db-status", async (req, res) => {
       };
     }
 
+    // Check if triggers exist
+    const triggerStatus = {};
+    try {
+      const triggerResult = await pool.query(
+        `SELECT trigger_name, event_manipulation, action_timing 
+         FROM information_schema.triggers 
+         WHERE trigger_schema = 'public' AND trigger_name = 'trg_raw_events_insert'`
+      );
+
+      const functionResult = await pool.query(
+        `SELECT routine_name, routine_type 
+         FROM information_schema.routines 
+         WHERE routine_schema = 'public' AND routine_name = 'notify_new_event'`
+      );
+
+      triggerStatus.trigger_exists = triggerResult.rows.length > 0;
+      triggerStatus.function_exists = functionResult.rows.length > 0;
+      triggerStatus.trigger_details = triggerResult.rows[0] || null;
+    } catch (triggerError) {
+      triggerStatus.error = triggerError.message;
+    }
+
     res.json({
       database_status: "connected",
       tables: status,
+      triggers: triggerStatus,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -421,6 +473,7 @@ if (process.env.NODE_ENV !== "production") {
     try {
       console.log("🔄 Resetting database...");
 
+      // Drop all tables in the right order (handle foreign key dependencies)
       const tables = [
         "insights",
         "pipeline_runs",
@@ -431,9 +484,18 @@ if (process.env.NODE_ENV !== "production") {
         await pool.query(`DROP TABLE IF EXISTS ${table} CASCADE`);
       }
 
+      // Drop trigger function if it exists (since we dropped the tables)
+      await pool.query(`DROP FUNCTION IF EXISTS notify_new_event() CASCADE`);
+
+      // Recreate schema and triggers
       await ensureSchemaExists();
-      res.json({ success: true, message: "Database reset complete" });
+
+      res.json({
+        success: true,
+        message: "Database reset complete - schema and triggers applied",
+      });
     } catch (error) {
+      console.error("❌ Database reset failed:", error.message);
       res
         .status(500)
         .json({ error: "Database reset failed", details: error.message });
