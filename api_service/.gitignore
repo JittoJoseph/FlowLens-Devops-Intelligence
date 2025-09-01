@@ -3,4 +3,4 @@ __venv__/
 *.env
 *.env.*
 __pycache__/
-root.crt
+root.*

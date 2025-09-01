@@ -1,4 +1,5 @@
 /ingestion_service/node_modules
 /ingestion_service/sampleresponses
 __venv__/
-root.
+root.*
+.vscode/
