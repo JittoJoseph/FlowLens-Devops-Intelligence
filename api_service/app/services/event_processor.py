@@ -1,11 +1,15 @@
 # api_service/app/services/event_processor.py
 
 import json
+from typing import Set
 from datetime import datetime
 from loguru import logger
 from app.data.database import db_helpers
 from app.services import ai_service
 from app.services.websocket_manager import websocket_manager
+
+# A simple in-memory lock to prevent race conditions between the listener and poller
+PROCESSING_EVENTS: Set[str] = set()
 
 async def _get_latest_pr_state(pr_number: int):
     """Fetches the complete, aggregated state of a single PR."""
@@ -61,6 +65,12 @@ async def process_event_by_id(event_id: str):
     and handles AI failures gracefully.
     """
     logger.info(f"Processing event with ID: {event_id}")
+    if event_id in PROCESSING_EVENTS:
+        logger.warning(f"Event {event_id} is already being processed. Skipping.")
+        return
+    
+    PROCESSING_EVENTS.add(event_id)
+    
     try:
         event = await db_helpers.select_one("raw_events", where={"id": event_id})
         if not event:
