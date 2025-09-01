@@ -67,6 +67,14 @@ async function ensureSchemaExists() {
     await pool.query(schemaSql);
 
     console.log("✅ schema.sql applied successfully");
+    
+    // Apply triggers after schema is created
+    const triggerPath = path.join(__dirname, "trigger.sql");
+    if (fs.existsSync(triggerPath)) {
+      const triggerSql = fs.readFileSync(triggerPath, "utf8");
+      await pool.query(triggerSql);
+      console.log("✅ trigger.sql applied successfully");
+    }
   } catch (err) {
     console.error("❌ Failed to ensure schema exists:", err.message);
     throw err;
@@ -530,7 +538,7 @@ if (process.env.NODE_ENV !== "production") {
 
       res.json({
         success: true,
-        message: "Database reset complete - schema applied",
+        message: "Database reset complete - schema and triggers applied",
       });
     } catch (error) {
       console.error("❌ Database reset failed:", error.message);
@@ -820,47 +828,6 @@ async function processPullRequestReviewEvent(
         markChanged
       );
     }
-  }
-}
-
-// Database helper functions
-async function processPullRequestReviewEvent(
-  payload,
-  repoId,
-  markChanged = null
-) {
-  const { action, review, pull_request } = payload;
-
-  if (action === "submitted") {
-    if (review.state === "approved") {
-      await updatePipelineStatus(
-        repoId,
-        pull_request.number,
-        "status_approval",
-        "approved",
-        {
-          reviewer: review.user.login,
-          review_id: review.id,
-        },
-        markChanged
-      );
-    } else if (review.state === "changes_requested") {
-      await updatePipelineStatus(
-        repoId,
-        pull_request.number,
-        "status_approval",
-        "changes_requested",
-        {
-          reviewer: review.user.login,
-          review_id: review.id,
-        },
-        markChanged
-      );
-    }
-
-    // TODO: Generate AI insights for the PR review
-    // This is where you would call Gemini API to analyze the PR
-    // and generate insights for the insights table
   }
 }
 
