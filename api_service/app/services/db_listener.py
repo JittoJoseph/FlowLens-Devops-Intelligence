@@ -2,40 +2,56 @@
 
 import asyncio
 from loguru import logger
-from asyncpg.exceptions import ConnectionDoesNotExistError
 from app.data.database import core_db
 from app.services.event_processor import process_event_by_id
 
-# --- The asyncio.Event is the key to a truly idle, responsive listener ---
-stop_event = asyncio.Event()
+# --- A simple flag for graceful shutdown ---
+_running = True
 
-def _notification_handler(connection, pid, channel, payload):
-    """Callback function that is executed when a notification is received."""
-    logger.success(f"NOTIFICATION RECEIVED on channel '{channel}': New event ID is {payload}")
-    asyncio.create_task(process_event_by_id(payload))
+def stop_listener():
+    global _running
+    _running = False
+    logger.info("Stop signal received for DB listener.")
 
 async def listen_for_db_notifications():
-    """Listens for DB notifications using a dedicated, resilient connection."""
+    """
+    Listens for DB notifications using a dedicated, resilient connection.
+    This is the primary, real-time event processing trigger.
+    """
     logger.info("Starting database notification listener...")
-    
-    while not stop_event.is_set():
-        connection = None
+    db = core_db.get_listener_db()
+
+    # The outer loop handles reconnecting if the connection is ever lost.
+    while _running:
         try:
-            connection = await core_db.create_dedicated_connection()
-            await connection.add_listener('new_event', _notification_handler)
-            logger.success("Successfully listening for 'new_event' notifications.")
-            
-            # --- THE FIX ---
-            # await stop_event.wait() will pause this function indefinitely
-            # until stop_event.set() is called during shutdown.
-            # This is the most efficient and correct way to wait.
-            await stop_event.wait()
+            # We use `iterate` which is designed for long-lived operations like LISTEN.
+            # It will yield notifications as they arrive.
+            async for notification in db.iterate("LISTEN new_event"):
+                if not _running:
+                    break
+                
+                event_id = notification['payload']
+                logger.success(f"NOTIFICATION RECEIVED: New event ID is {event_id}")
+
+                # --- The CORE LOGIC ---
+                # 1. Process the event immediately.
+                try:
+                    await process_event_by_id(event_id)
+                    # 2. Mark it as processed.
+                    await db_helpers.update(
+                        "raw_events", data={"processed": True}, where={"id": event_id}
+                    )
+                    logger.info(f"Successfully processed and marked event {event_id}.")
+                except Exception as e:
+                    # If processing fails, we log it. The event remains unprocessed
+                    # in the DB and can be picked up by a fallback mechanism or manual check.
+                    logger.error(f"Failed to process event {event_id} from notification. It remains unprocessed. Error: {e}")
 
         except asyncio.CancelledError:
-            logger.warning("Listener task was cancelled.")
+            logger.warning("DB listener task was cancelled.")
             break
         except Exception as e:
-            logger.error(f"DB listener encountered an error: {e}. Reconnecting in 5 seconds...")
-        
-        if not stop_event.is_set():
-            await asyncio.sleep(5)
+            logger.error(f"DB listener connection failed: {e}. Reconnecting in 5 seconds...")
+            await asyncio.sleep(5) # Wait before trying to reconnect
+    
+    logger.info("Database notification listener has shut down.")
