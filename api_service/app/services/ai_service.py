@@ -13,11 +13,11 @@ try:
         MODEL_NAME = settings.GEMINI_AI_MODEL
         logger.success("Gemini API configured successfully.")
     else:
-        model = None
+        MODEL_NAME = None
         logger.warning("GEMINI_API_KEY not found. AI features will be disabled.")
 except Exception as e:
     logger.critical(f"FATAL: Failed to configure Gemini API. AI features will be disabled. Error: {e}")
-    model = None
+    MODEL_NAME = None
 
 # --- Load prompt template ---
 PROMPT_TEMPLATE = ""
@@ -39,7 +39,7 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
     Generates AI insights for a PR using Gemini. Now resilient to API errors.
     Expects `pr_data` to have keys like: title, author, branch_name, etc.
     """
-    if not model or not PROMPT_TEMPLATE:
+    if not MODEL_NAME or not PROMPT_TEMPLATE:
         logger.error("AI service is not configured. Cannot get insights.")
         return None
 
