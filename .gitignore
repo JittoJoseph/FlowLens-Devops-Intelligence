@@ -9,3 +9,4 @@ root.*
 *.env
 *.env.*
 __pycache__/
+/ingestion_service/exports
