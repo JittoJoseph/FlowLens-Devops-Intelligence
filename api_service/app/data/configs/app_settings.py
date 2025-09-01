@@ -1,12 +1,12 @@
 # api_service/app/data/configs/app_settings.py
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Literal
+from typing import Literal, Optional
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
-    # App
+    # Gunicorn Settings
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
@@ -16,17 +16,25 @@ class AppSettings(BaseSettings):
     KEEP_ALIVE: int = 5
     GRACEFUL_TIMEOUT: int = 120
 
-    # Database
+    # Database Main
     DATABASE_URL: str
     POOL_MIN_SIZE: int = 2
     POOL_MAX_SIZE: int = 10
     POOL_ACQUIRE_TIMEOUT: int = 30
+
+    # Database Listener 
+    DATABASE_URL_LISTENER: Optional[str] = None
     EVENT_PROCESSING_MODE: Literal["LISTEN", "POLL"] = "LISTEN"
 
     # Services
     GEMINI_API_KEY: str
     GEMINI_AI_MODEL: str = "gemini-2.5-flash"
-    AI_TEMP: float = 0.3
-    AI_MAX_TOKEN: int = 2048
+    AI_TEMP: float = 0.5
+    AI_MAX_TOKEN: int = 1024
+
+    @property
+    def LISTENER_DATABASE_URL(self) -> str:
+        """Returns the specific listener URL if provided, otherwise falls back to the main DB URL."""
+        return self.DATABASE_URL_LISTENER or self.DATABASE_URL
 
 settings = AppSettings()

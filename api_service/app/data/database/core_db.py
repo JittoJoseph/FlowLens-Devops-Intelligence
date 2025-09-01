@@ -32,7 +32,7 @@ def get_listener_db() -> Database:
     if listener_db is None:
         # We use a pool of 1 to ensure it's a single, dedicated connection.
         listener_db = Database(
-            settings.DATABASE_URL,
+            settings.LISTENER_DATABASE_URL,
             min_size=1,
             max_size=1,
         )
