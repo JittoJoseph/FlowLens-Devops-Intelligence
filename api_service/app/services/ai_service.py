@@ -3,13 +3,14 @@ import json
 import re
 from loguru import logger
 from google import genai
+from google.genai import types
 from app.data.configs.app_settings import settings
 
 # --- Configure Gemini client ---
 try:
     if settings.GEMINI_API_KEY:
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        model = genai.GenerativeModel(settings.GEMINI_AI_MODEL)
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        MODEL_NAME = settings.GEMINI_AI_MODEL
         logger.success("Gemini API configured successfully.")
     else:
         model = None
@@ -55,7 +56,15 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
     logger.info(f"Requesting AI insight for PR #{pr_number}")
 
     try:
-        response = await model.generate_content_async(prompt)
+        generation_config = types.GenerateContentConfig(
+            temperature=settings.AI_TEMP,
+            max_output_tokens=settings.AI_MAX_TOKEN,
+        )
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+            config=generation_config,
+        )        
         
         # --- FIX 1: DEFENSIVE CHECK for empty or invalid responses ---
         if not response or not hasattr(response, 'text') or not response.text:

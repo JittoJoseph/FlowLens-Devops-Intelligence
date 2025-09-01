@@ -17,11 +17,15 @@ async def poll_for_events():
     
     while _running:
         try:
-            # Fetch one unprocessed event at a time to handle sequentially
-            event_to_process = await db_helpers.select_one(
-                "raw_events", where={"processed": False}, order_by="received_at"
+            
+            events = await db_helpers.select(
+                "raw_events",
+                where={"processed": False},
+                order_by="received_at", # order by oldest first
+                limit=1
             )
-
+            event_to_process = events[0] if events else None
+            
             if event_to_process:
                 event_id = event_to_process['id']
                 logger.success(f"Found new event to process: {event_id}")
