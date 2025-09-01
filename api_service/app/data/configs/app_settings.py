@@ -1,6 +1,7 @@
 # api_service/app/data/configs/app_settings.py
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Literal
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
@@ -20,6 +21,7 @@ class AppSettings(BaseSettings):
     POOL_MIN_SIZE: int = 2
     POOL_MAX_SIZE: int = 10
     POOL_ACQUIRE_TIMEOUT: int = 30
+    EVENT_PROCESSING_MODE: Literal["LISTEN", "POLL"] = "LISTEN"
 
     # Services
     GEMINI_API_KEY: str
