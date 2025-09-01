@@ -67,7 +67,7 @@ async function ensureSchemaExists() {
     await pool.query(schemaSql);
 
     console.log("✅ schema.sql applied successfully");
-    
+
     // Apply triggers after schema is created
     const triggerPath = path.join(__dirname, "trigger.sql");
     if (fs.existsSync(triggerPath)) {
