@@ -455,7 +455,74 @@ async function fetchChangedFiles(repositoryFullName, prNumber) {
     }
 
     const files = await response.json();
-    return files.map((file) => file.filename);
+
+    // Filter and process files
+    return files
+      .filter((file) => {
+        // Skip binary files
+        if (
+          file.status === "added" &&
+          file.additions === 0 &&
+          file.deletions === 0
+        ) {
+          return false; // Likely binary
+        }
+
+        // Skip files without patches (binary files don't have patches)
+        if (!file.patch) {
+          return false;
+        }
+
+        // Skip very large files (>500 lines changed)
+        if ((file.changes || 0) > 500) {
+          console.warn(
+            `⚠️ Skipping large file: ${file.filename} (${file.changes} changes)`
+          );
+          return false;
+        }
+
+        // Skip common binary/generated file extensions
+        const binaryExtensions = [
+          ".png",
+          ".jpg",
+          ".jpeg",
+          ".gif",
+          ".pdf",
+          ".zip",
+          ".exe",
+          ".dll",
+          ".so",
+          ".dylib",
+          ".lock",
+        ];
+        const isKnownBinary = binaryExtensions.some((ext) =>
+          file.filename.toLowerCase().endsWith(ext)
+        );
+        if (isKnownBinary) {
+          return false;
+        }
+
+        return true;
+      })
+      .map((file) => {
+        let patch = file.patch || "";
+
+        // Truncate very long patches (keep first 5000 chars for AI analysis)
+        if (patch.length > 5000) {
+          patch =
+            patch.substring(0, 5000) +
+            "\n... [truncated for storage efficiency]";
+        }
+
+        return {
+          filename: file.filename,
+          status: file.status, // "added", "removed", "modified", "renamed"
+          additions: file.additions || 0,
+          deletions: file.deletions || 0,
+          changes: file.changes || 0,
+          patch: patch,
+        };
+      });
   } catch (error) {
     console.warn(`⚠️ Error fetching files for PR #${prNumber}:`, error.message);
     return [];
