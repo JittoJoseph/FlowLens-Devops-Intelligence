@@ -27,7 +27,7 @@ The API service operates on a **resilient polling mechanism**, decoupling it fro
 |                                         Database (YugabyteDB)                                              |
 |                                                                                                            |
 | +------------------+   +--------------------+   +-----------------+   +----------------------------------+ |
-| |  raw_events      |   | pull_requests_view |   | pipeline_runs   |   | insights                         | |
+| |  raw_events      |   | pull_requests      |   | pipeline_runs   |   | insights                         | |
 | | (processed=false)|   | (PR metadata)      |   | (CI/CD status)  |   | (AI-generated)                   | |
 | +-------^----------+   +--------------------+   +-----------------+   +----------------^-----------------+ |
 +---------|------------------------------------------------------------------------------|-------------------+
@@ -50,11 +50,11 @@ The API service operates on a **resilient polling mechanism**, decoupling it fro
 ```
 
 **The flow is as follows:**
-1.  The **Ingestion Service** receives a webhook, performs initial data extraction into `pull_requests_view` and `pipeline_runs`, and critically, inserts a record into `raw_events` with `processed = false`.
-2.  The **API Service** runs a background poller that queries the `raw_events` table every 2 seconds for rows where `processed = false`.
+1.  The **Ingestion Service** receives a webhook, performs data extraction into the `pull_requests` and `pipeline_runs` tables, and critically, inserts a record into `raw_events` with `processed = false`.
+2.  The **API Service** runs a background poller that queries the `raw_events` table for rows where `processed = false`.
 3.  For each unprocessed event, the API service triggers the **AI Enrichment** logic if it's a code-changing event (e.g., a new PR or a push to an existing one).
 4.  The generated analysis is saved to the `insights` table.
-5.  The `raw_events` row is marked as `processed = true`.
+5.  Only after successful processing, the `raw_events` row is marked as `processed = true`. If processing fails, the event will be retried.
 6.  Finally, the service fetches the complete, latest state of the affected pull request and **broadcasts it via WebSocket** to all connected Flutter clients.
 
 ---
@@ -94,10 +94,12 @@ The API service operates on a **resilient polling mechanism**, decoupling it fro
     PORT=8000
 
     DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require"
-    GEMINI_API_KEY="your_google_gemini_api_key_here"
     
+    # Google Gemini Configuration
+    GEMINI_API_KEY="your_google_gemini_api_key_here"
+    GEMINI_AI_MODEL="gemini-1.5-flash" # Or another supported model
 
-    # useful if using Gunicorn on production 
+    # Gunicorn settings for production 
     WORKERS = 1
     WORKER_CONNECTIONS = 1000
     GUNICORN_TIMEOUT = 120
@@ -105,14 +107,14 @@ The API service operates on a **resilient polling mechanism**, decoupling it fro
     GRACEFUL_TIMEOUT = 120
     ```
 5.  **Run the service:**
-    > `for single worker environment` 
+    > For a single worker environment (development):
     > ```bash
-    >uvicorn app.main:app --reload # for production, remove --reload flag
-    >```
-    > `For multi using gunicorn`
-    >```bash
-    >python -m server_runner
-    >```
+    > uvicorn app.main:app --reload
+    > ```
+    > For multiple workers using Gunicorn (production):
+    > ```bash
+    > python server_runner.py
+    > ```
     The API will be available at `http://localhost:8000`.
 
 ---
@@ -137,7 +139,7 @@ This service exposes a REST API for initial data loading and a WebSocket for rea
         "repositoryName": "DevByZero/FlowLens-Demo",
         "createdAt": "2025-08-31T05:42:59.568393+00:00",
         "updatedAt": "2025-08-31T05:42:59.568393+00:00",
-        "status": "pending",
+        "status": "buildPassed",
         "filesChanged": "[]",
         "additions": 15,
         "deletions": 12,
@@ -202,17 +204,36 @@ This service exposes a REST API for initial data loading and a WebSocket for rea
           "event": "pr_update",
           "data": {
             "pr_number": 101,
-            "title": "Fix: Payment processing fails...",
-            "updated_at": "2025-08-31T05:42:59.568393+00:00",
+            "title": "Fix: Payment processing fails for international cards",
+            "description": "This PR attempts to resolve the payment gateway issue.",
+            "author": "frontend-dev",
+            "author_avatar": "https://avatars.githubusercontent.com/u/3",
+            "commit_sha": "f4b3c2d1a0e9f8g7h6i5j4k3l2m1n0o9",
+            "repository_name": "DevByZero/FlowLens-Demo",
+            "branch_name": "hotfix/payment-gateway",
+            "additions": 15,
+            "deletions": 12,
+            "is_draft": false,
+            "created_at": "2025-08-31T05:42:59.568393Z",
+            "updated_at": "2025-08-31T05:43:11.123456Z",
+            "state": "open",
             "pipeline_status": {
+              "id": "a1b2c3d4-...",
+              "pr_number": 101,
+              "commit_sha": "f4b3c2d1...",
               "status_pr": "opened",
-              "status_build": "pending",
+              "status_build": "buildPassed",
               "status_approval": "pending",
-              "status_merge": "pending"
+              "status_merge": "pending",
+              "updated_at": "2025-08-31T05:43:11.123456Z"
             },
             "ai_insight": {
-              "risk_level": "High",
-              "summary": "This change will not resolve the critical payment..."
+              "id": "e5f6g7h8-...",
+              "pr_number": 101,
+              "risk_level": "high",
+              "summary": "This change will not resolve the critical payment processing issue...",
+              "recommendation": "Do not merge this commit.",
+              "created_at": "2025-08-31T05:43:10.851242Z"
             }
           }
         }
@@ -224,13 +245,13 @@ This service exposes a REST API for initial data loading and a WebSocket for rea
 
 ### For the Ingestion Service (Node.js) Developer
 This API service relies on the ingestion service to perform two critical tasks for every relevant GitHub webhook:
-1.  **State Management:** Accurately insert and update records in the `pull_requests_view` and `pipeline_runs` tables. These tables are considered the source of truth for PR metadata and status.
+1.  **State Management:** Accurately insert and update records in the `pull_requests` and `pipeline_runs` tables. These tables are considered the source of truth for PR metadata and status.
 2.  **Triggering:** For **every event** that the API service might care about (PRs, workflows, etc.), you **must** insert a corresponding record into the `raw_events` table with `processed = false`. This is the handshake that triggers our AI enrichment and WebSocket broadcast.
 
 ### For the Frontend (Flutter) Developer
 Your interaction with this service follows a simple two-step pattern:
 1.  **Initial Load:** On application startup, make a single `GET` request to `/api/prs` to populate your dashboard with the current state of all pull requests.
-2.  **Live Updates:** Immediately after the initial load, establish a persistent connection to the `/ws` endpoint. Listen for `pr_update` messages. When a message arrives, find the corresponding pull request in your local state by its `pr_number` and replace it with the new data from the `data` payload. You do not need to make another REST API call.
+2.  **Live Updates:** Immediately after the initial load, establish a persistent connection to the `/ws` endpoint. Listen for `pr_update` messages. When a message arrives, find the corresponding pull request in your local state by its `pr_number` and replace it entirely with the new object from the `data` payload. The WebSocket message provides the complete, fresh state, so no merging is required.
 
 ---
 
