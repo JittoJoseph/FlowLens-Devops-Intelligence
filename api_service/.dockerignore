@@ -1,0 +1,20 @@
+# .dockerignore
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+__venv__/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.idea/
+.vscode/
+.git/
+.gitignore
+*.md
+.env
+root.crt
+*.sh

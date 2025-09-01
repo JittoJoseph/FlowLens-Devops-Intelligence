@@ -1,0 +1,17 @@
+# docker-compose.yml
+
+version: '3.8'
+
+services:
+  api-service:
+    build: .
+    container_name: api-service-dev
+    ports:
+      - "8000:8000"
+    # Load environment variables from your local .env file
+    env_file:
+      - .env
+    # --- Simulate Render's Secret File Mount ---
+    # This mounts your local root.crt to the expected path inside the container.
+    volumes:
+      - ./root.crt:/etc/ssl/certs/root.crt:ro
