@@ -1,0 +1,64 @@
+const { Pool } = require("pg");
+const fs = require("fs");
+const path = require("path");
+
+// Database configuration
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production" ? true : false,
+});
+
+// Tables to export (excluding raw_events)
+const TABLES_TO_EXPORT = ["pull_requests", "pipeline_runs", "insights"];
+
+async function exportTables() {
+  try {
+    console.log("🔍 Connecting to database...");
+    await pool.query("SELECT NOW()");
+    console.log("✅ Connected");
+
+    // Clear exports folder
+    const outputDir = path.join(__dirname, "..", "exports");
+    if (fs.existsSync(outputDir)) {
+      console.log("Clearing exports folder...");
+      fs.rmSync(outputDir, { recursive: true, force: true });
+    }
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    // Export each table
+    for (const tableName of TABLES_TO_EXPORT) {
+      console.log(`Exporting ${tableName}...`);
+
+      const result = await pool.query(
+        `SELECT * FROM ${tableName} ORDER BY created_at DESC`
+      );
+      const data = {
+        table: tableName,
+        exported_at: new Date().toISOString(),
+        count: result.rows.length,
+        data: result.rows,
+      };
+
+      const filename = `${tableName}.json`;
+      const filepath = path.join(outputDir, filename);
+
+      fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
+      console.log(`✅ ${tableName}: ${result.rows.length} records`);
+    }
+
+    console.log("Export completed!");
+    console.log(`Files saved in: ${outputDir}`);
+  } catch (error) {
+    console.error("❌ Export failed:", error.message);
+  } finally {
+    await pool.end();
+  }
+}
+
+// Run if called directly
+if (require.main === module) {
+  console.log("Starting Database Export");
+  exportTables();
+}
+
+module.exports = { exportTables };
