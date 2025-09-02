@@ -13,10 +13,10 @@ const pool = new Pool({
 
 // Tables to export with their respective timestamp columns
 const TABLES_TO_EXPORT = [
+  { name: "repositories", timestampColumn: "updated_at" },
   { name: "pull_requests", timestampColumn: "created_at" },
   { name: "pipeline_runs", timestampColumn: "created_at" },
   { name: "insights", timestampColumn: "created_at" },
-  { name: "raw_events", timestampColumn: "received_at" },
 ];
 
 async function exportTables() {
