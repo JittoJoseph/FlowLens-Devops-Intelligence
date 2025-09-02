@@ -10,8 +10,9 @@ The FlowLens API Service v2.0 is the central intelligence layer for the FlowLens
 - **Flexible APIs:** New RESTful endpoints with optional repository filtering
 - **WebSocket Broadcasting:** Real-time updates for all connected clients
 
-This service transforms raw GitHub webhook data into actionable intelligence across multiple repositories.
+This service acts as the "brain" of the operation, transforming raw event data into actionable intelligence and ensuring the frontend is always up-to-date.
 
+<!--(DOCS still needs to updated as there's new event listening setup from DB)-->
 ---
 
 ## 2. Architecture & Data Flow - v2.0
