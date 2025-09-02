@@ -20,6 +20,13 @@ Commit Data:
 Author: {author}
 Branch: {branch_name}
 Commit Message: {commit_message}
-Files Changed:
+Files Changed Analysis:
 {files_changed}
 ---
+
+Risk Assessment Guidelines:
+- Low: Documentation, minor styling, configuration tweaks
+- Medium: Feature additions, non-breaking API changes, test improvements
+- High: Database migrations, security changes, breaking API changes, core business logic modifications
+
+Focus on business impact and provide practical recommendations for code review and deployment planning.
