@@ -52,3 +52,13 @@ To ensure backward compatibility with older clients, the following v1.0 endpoint
 #### `GET /api/repository` (Legacy)
 - **Description:** Returns metadata for a single, primary repository.
 - **Features:** Supports legacy clients that are not multi-repository aware.
+
+
+</br>
+
+> #
+>
+> **</> Built by Mission Control | DevByZero 2025**
+>
+> *Defining the infinite possibilities in your DevOps pipeline.*
+> ##

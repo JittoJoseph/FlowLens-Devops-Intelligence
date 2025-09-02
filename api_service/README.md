@@ -33,3 +33,12 @@ The service and its interactive API docs will be available at `http://localhost:
 - **[WebSocket Guide](./docs/websockets.md)**: Details on the real-time communication protocol.
 - **[AI Insights System](./docs/ai_insights.md)**: An overview of the AI-powered governance logic.
 - **[Integration Guide](./docs/integration_guide.md)**: Guidelines for service-to-service interaction.
+
+</br>
+
+> #
+>
+> **</> Built by Mission Control | DevByZero 2025**
+>
+> *Defining the infinite possibilities in your DevOps pipeline.*
+> ##

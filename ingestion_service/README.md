@@ -30,3 +30,12 @@ The service will be available at `http://localhost:3000`.
 - **[Deployment Guide](./docs/deployment.md)**: Step-by-step instructions for deploying to the cloud.
 - **[GitHub Webhook Setup](./docs/github_webhooks.md)**: How to configure the data source.
 - **[Integration Guide](./docs/integration_guide.md)**: The data contract for this microservice.
+
+</br>
+
+> #
+>
+> **</> Built by Mission Control | DevByZero 2025**
+>
+> *Defining the infinite possibilities in your DevOps pipeline.*
+> ##

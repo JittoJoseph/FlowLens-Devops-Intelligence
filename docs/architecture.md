@@ -52,3 +52,12 @@ The FlowLens platform is designed with a service-oriented architecture that sepa
     *   The **API Service** is the "brain," containing all business logic, AI integration, and client-facing communication (API and WebSockets).
 
 4.  **Real-Time via Broadcasting:** After processing a change, the API Service broadcasts the updated state to all connected clients via WebSockets, ensuring the frontend is always synchronized.
+
+</br>
+
+> #
+>
+> **</> Built by Mission Control | DevByZero 2025**
+>
+> *Defining the infinite possibilities in your DevOps pipeline.*
+> ##

@@ -55,3 +55,13 @@ A WebSocket message is broadcasted whenever the API service's poller detects and
     });
     ```
 This lightweight approach ensures the UI stays responsive and only fetches detailed data when necessary.
+
+
+</br>
+
+> #
+>
+> **</> Built by Mission Control | DevByZero 2025**
+>
+> *Defining the infinite possibilities in your DevOps pipeline.*
+> ##

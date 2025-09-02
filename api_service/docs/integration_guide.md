@@ -41,3 +41,13 @@ WHERE repo_id = $1 AND pr_number = $2;
     - Do not rely on the WebSocket to transmit the full application state. Fetch the latest state via the REST APIs after receiving a notification. See the **[WebSocket Guide](./websockets.md)** for details.
 
 3.  **Leverage Enhanced Data:** The v2.0 APIs provide richer data than before. Your application can now access and display detailed file change information and more nuanced AI insights.
+
+
+</br>
+
+> #
+>
+> **</> Built by Mission Control | DevByZero 2025**
+>
+> *Defining the infinite possibilities in your DevOps pipeline.*
+> ##

@@ -101,3 +101,12 @@ This ensures the UI reflects the latest status without constant polling from the
 2.  **Navigate to the app folder**: `cd flutter_app`
 3.  **Install dependencies**: `flutter pub get`
 4.  **Run the application**: `flutter run`
+
+</br>
+
+> #
+>
+> **</> Built by Mission Control | DevByZero 2025**
+>
+> *Defining the infinite possibilities in your DevOps pipeline.*
+> ##

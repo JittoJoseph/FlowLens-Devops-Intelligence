@@ -40,3 +40,13 @@ The generation of an insight follows a clear, automated pipeline triggered by th
 5.  **Storage and Broadcasting:**
     - The generated insight is saved to the `insights` table in the database, linked to the correct repository and pull request.
     - The service's WebSocket manager is notified, which then broadcasts a state update to all connected clients.
+
+
+</br>
+
+> #
+>
+> **</> Built by Mission Control | DevByZero 2025**
+>
+> *Defining the infinite possibilities in your DevOps pipeline.*
+> ##
