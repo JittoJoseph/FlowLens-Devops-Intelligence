@@ -44,6 +44,14 @@ async def process_new_pull_request(pr_record: dict):
         
         # Check if this is a genuinely new PR or just a status update
         files_changed = pr_record.get('files_changed', [])
+        
+        # Handle case where files_changed might be a JSON string
+        if isinstance(files_changed, str):
+            try:
+                files_changed = json.loads(files_changed)
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON in files_changed for PR #{pr_number}")
+                files_changed = []
         existing_insights = await db_helpers.select(
             "insights",
             where={"repo_id": repo_id, "pr_number": pr_number},
@@ -57,7 +65,10 @@ async def process_new_pull_request(pr_record: dict):
         
         if should_generate_insights:
             logger.info(f"New PR #{pr_number} detected with {len(files_changed)} changed files, generating AI analysis...")
-            await _generate_ai_insight_for_pr(pr_record)
+            # Update pr_record with parsed files_changed for AI processing
+            pr_record_with_parsed_files = pr_record.copy()
+            pr_record_with_parsed_files['files_changed'] = files_changed
+            await _generate_ai_insight_for_pr(pr_record_with_parsed_files)
             # Broadcast as new PR with insight generation
             await websocket_manager.broadcast_pr_state_update(repo_id, pr_number)
         elif existing_insights:
@@ -139,8 +150,15 @@ async def _generate_ai_insight_for_pr(pr_record: dict):
         repo_id = pr_record['repo_id']
         pr_number = pr_record['pr_number']
         
-        # Check if we have files_changed data
+        # Check if we have files_changed data and parse it if it's a JSON string
         files_changed = pr_record.get('files_changed', [])
+        if isinstance(files_changed, str):
+            try:
+                files_changed = json.loads(files_changed)
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON in files_changed for PR #{pr_number}")
+                return False
+        
         if not files_changed:
             logger.info(f"No files_changed data for PR #{pr_number}, skipping AI insight generation")
             return False
