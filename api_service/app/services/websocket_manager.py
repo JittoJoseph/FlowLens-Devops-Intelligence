@@ -57,35 +57,49 @@ class WebSocketManager:
         else:
             return data
 
-    async def broadcast_pr_state_update(self, repo_id, pr_number: int):
+    async def broadcast_pr_state_update(self, repo_id, pr_number: int, event_state: str = None):
         """
-        Broadcast only PR state updates with minimal data for Flutter real-time updates.
-        Sends only: repo_id, pr_number, and current state.
+        Broadcast PR state updates with minimal data for Flutter real-time updates.
+        Sends: repo_id, pr_number, and the actual event state (not database state).
+        
+        Args:
+            repo_id: Repository ID 
+            pr_number: PR number
+            event_state: The actual event state (e.g., 'approved', 'buildPassed', 'merged', etc.)
+                        If None, falls back to database state
         """
         try:
             # Convert repo_id to string if it's a UUID
             repo_id_str = str(repo_id) if isinstance(repo_id, UUID) else repo_id
             
-            # Get current PR state
-            pr_data = await db_helpers.select_one(
-                "pull_requests",
-                where={"repo_id": repo_id, "pr_number": pr_number},
-                select_fields="state, merged, is_draft"
-            )
-            
-            if not pr_data:
-                logger.warning(f"PR #{pr_number} not found in repository {repo_id_str}")
-                return
+            # Use provided event_state or fall back to database state
+            if event_state:
+                state_to_broadcast = event_state
+                logger.info(f"Broadcasting event state '{event_state}' for PR #{pr_number}")
+            else:
+                # Fallback: Get current PR state from database
+                pr_data = await db_helpers.select_one(
+                    "pull_requests",
+                    where={"repo_id": repo_id, "pr_number": pr_number},
+                    select_fields="state, merged, is_draft"
+                )
+                
+                if not pr_data:
+                    logger.warning(f"PR #{pr_number} not found in repository {repo_id_str}")
+                    return
+                
+                state_to_broadcast = pr_data["state"]
+                logger.info(f"Broadcasting database state '{state_to_broadcast}' for PR #{pr_number}")
             
             # Simple state message with only essential data
             state_message = {
                 "repo_id": repo_id_str,
                 "pr_number": pr_number,
-                "state": pr_data["state"]
+                "state": state_to_broadcast
             }
             
             await self.broadcast_json(state_message)
-            logger.success(f"Broadcasted state update for PR #{pr_number} in {repo_id_str}: {pr_data['state']}")
+            logger.success(f"Broadcasted state update for PR #{pr_number} in {repo_id_str}: {state_to_broadcast}")
             
         except Exception as e:
             logger.error(f"Failed to broadcast PR state update for #{pr_number} in {repo_id}: {e}")

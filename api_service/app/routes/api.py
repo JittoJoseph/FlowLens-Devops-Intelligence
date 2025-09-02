@@ -125,25 +125,61 @@ async def get_insights(
 ):
     """
     Returns AI insights with optional repository and PR filtering.
+    Includes PR details like additions, deletions, and changed files.
     """
     logger.info(f"Fetching insights{f' for repository {repository_id}' if repository_id else ''}{f' for PR #{pr_id}' if pr_id else ''}...")
     try:
-        where_clause = {}
+        # Get database connection for complex query
+        db = get_db()
+        
+        # Build WHERE clause
+        where_conditions = []
+        params = {}
+        
         if repository_id:
-            where_clause["repo_id"] = repository_id
+            where_conditions.append("i.repo_id = :repository_id")
+            params["repository_id"] = repository_id
         if pr_id:
-            where_clause["pr_number"] = pr_id
+            where_conditions.append("i.pr_number = :pr_id")
+            params["pr_id"] = pr_id
             
-        insights = await db_helpers.select(
-            table="insights",
-            where=where_clause if where_clause else None,
-            order_by="created_at",
-            desc=True
-        )
+        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+        
+        # Enhanced query to join insights with pull_requests for additional details
+        query = f"""
+            SELECT 
+                i.*,
+                pr.additions,
+                pr.deletions,
+                pr.changed_files,
+                pr.files_changed
+            FROM insights i
+            LEFT JOIN pull_requests pr ON i.repo_id = pr.repo_id AND i.pr_number = pr.pr_number
+            WHERE {where_clause}
+            ORDER BY i.created_at DESC
+        """
+        
+        insights = await db.fetch_all(query, params)
         
         # Clean and format insights for API response
         response_data = []
         for insight in insights:
+            # Extract file paths from files_changed JSONB
+            files_changed = insight.get('files_changed', [])
+            if isinstance(files_changed, str):
+                try:
+                    files_changed = json.loads(files_changed)
+                except json.JSONDecodeError:
+                    files_changed = []
+            
+            file_paths = []
+            if isinstance(files_changed, list):
+                for file_change in files_changed:
+                    if isinstance(file_change, dict) and 'filename' in file_change:
+                        file_paths.append(file_change['filename'])
+                    elif isinstance(file_change, str):
+                        file_paths.append(file_change)
+            
             cleaned_insight = {
                 "id": insight['id'],
                 "repo_id": insight['repo_id'],
@@ -154,11 +190,16 @@ async def get_insights(
                 "risk_level": insight['risk_level'],
                 "summary": insight['summary'],
                 "recommendation": insight['recommendation'],
-                "created_at": insight['created_at'].isoformat() if insight['created_at'] else None
+                "created_at": insight['created_at'].isoformat() if insight['created_at'] else None,
+                # Additional PR details
+                "additions": insight.get('additions', 0),
+                "deletions": insight.get('deletions', 0),
+                "changed_files_count": insight.get('changed_files', 0),
+                "changed_file_paths": file_paths
             }
             response_data.append(cleaned_insight)
         
-        logger.success(f"Successfully fetched {len(response_data)} insights.")
+        logger.success(f"Successfully fetched {len(response_data)} insights with PR details.")
         return response_data
     except Exception as e:
         logger.error("Failed to fetch insights", exception=e)

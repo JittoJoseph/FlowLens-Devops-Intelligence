@@ -25,7 +25,7 @@ def get_db() -> Database:
             min_size=settings.POOL_MIN_SIZE,
             max_size=settings.POOL_MAX_SIZE,
             ssl=ssl_context,
-            force_rollback=True,
+            force_rollback=False,  # FIXED: Allow transactions to commit
             server_settings={'application_name': 'flowlens-api-service'}
         )
     return database
