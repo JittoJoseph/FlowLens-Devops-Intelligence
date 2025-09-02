@@ -131,21 +131,24 @@ def _determine_pipeline_event_state(pipeline_record: dict) -> str:
     status_merge = pipeline_record.get('status_merge', 'pending')
     
     # Priority order: merged > approval > build > PR creation
-    if status_merge in ['success', 'completed']:
+    # Match the actual values stored in the database
+    if status_merge == 'merged':
         return 'merged'
+    elif status_merge == 'closed':
+        return 'closed'
     elif status_merge == 'failed':
         return 'mergeFailed'
-    elif status_approval == 'success':
+    elif status_approval == 'approved':
         return 'approved'
-    elif status_approval == 'failed':
+    elif status_approval == 'rejected':
         return 'rejected'
-    elif status_build == 'success':
+    elif status_build == 'buildPassed':
         return 'buildPassed'
-    elif status_build == 'failed':
+    elif status_build == 'buildFailed':
         return 'buildFailed'
-    elif status_build == 'in_progress':
-        return 'buildStarted'
-    elif status_pr == 'success':
+    elif status_build == 'building':
+        return 'building'
+    elif status_pr == 'opened' or status_pr == 'pending':
         return 'opened'
     else:
         return 'updated'
@@ -155,11 +158,23 @@ def _determine_pr_event_state(pr_record: dict) -> str:
     """
     Determine the actual event state from PR record fields.
     Returns the actual PR state based on fields.
+    For PRs, check the most recent history entry to get the current workflow state.
     """
     state = pr_record.get('state', 'open')
     merged = pr_record.get('merged', False)
     is_draft = pr_record.get('is_draft', False)
+    history = pr_record.get('history', [])
     
+    # If we have history, use the most recent state
+    if history and isinstance(history, list):
+        latest_history = history[-1] if history else {}
+        latest_state = latest_history.get('state')
+        
+        # Use history state if it's a workflow state
+        if latest_state in ['building', 'buildPassed', 'buildFailed', 'approved', 'rejected']:
+            return latest_state
+    
+    # Fallback to record-level state determination
     if merged:
         return 'merged'
     elif state == 'closed' and not merged:
