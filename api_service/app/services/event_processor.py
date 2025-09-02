@@ -23,97 +23,144 @@ def _serialize_datetime_fields(data: dict) -> dict:
     return serialized
 
 
-async def _get_aggregated_pr_state(repo_id: str, pr_number: int):
+async def process_new_pull_request(pr_record: dict):
     """
-    Fetches the complete, aggregated state of a single PR including all related data.
+    Process a new or updated pull request.
+    Generates AI insights only for new PRs with files_changed data.
+    For updates (status changes, approvals, etc.), just broadcasts the updated state.
     """
+    repo_id = pr_record['repo_id']
+    pr_number = pr_record['pr_number']
+    record_id = pr_record['id']
+    
+    if record_id in PROCESSING_EVENTS:
+        logger.warning(f"PR record {record_id} is already being processed. Skipping.")
+        return
+    
+    PROCESSING_EVENTS.add(record_id)
+    
     try:
-        # Get PR data
-        pr_data = await db_helpers.select_one(
-            "pull_requests",
-            where={"repo_id": repo_id, "pr_number": pr_number}
-        )
+        logger.info(f"Processing PR #{pr_number} in repository {repo_id}")
         
-        if not pr_data:
-            logger.warning(f"PR #{pr_number} not found in repository {repo_id}")
-            return None
-        
-        # Get repository data
-        repo_data = await db_helpers.select_one(
-            "repositories",
-            where={"id": repo_id}
-        )
-        
-        # Get pipeline data
-        pipeline_data = await db_helpers.select_one(
-            "pipeline_runs",
-            where={"repo_id": repo_id, "pr_number": pr_number}
-        )
-        
-        # Get latest AI insight
-        insights = await db_helpers.select(
+        # Check if this is a genuinely new PR or just a status update
+        files_changed = pr_record.get('files_changed', [])
+        existing_insights = await db_helpers.select(
             "insights",
             where={"repo_id": repo_id, "pr_number": pr_number},
-            order_by="created_at",
-            desc=True,
             limit=1
         )
-        latest_insight = insights[0] if insights else None
         
-        # Construct aggregated state
-        aggregated_state = {
-            "event_type": "pr_update",
-            "repository": _serialize_datetime_fields(repo_data) if repo_data else None,
-            "pull_request": _serialize_datetime_fields(pr_data),
-            "pipeline": _serialize_datetime_fields(pipeline_data) if pipeline_data else None,
-            "latest_insight": _serialize_datetime_fields(latest_insight) if latest_insight else None,
-            "timestamp": datetime.now().isoformat()
-        }
+        # Only generate insights if:
+        # 1. This PR has files_changed data AND
+        # 2. No insights exist yet (meaning this is a new PR, not just a status update)
+        should_generate_insights = files_changed and not existing_insights
         
-        return aggregated_state
+        if should_generate_insights:
+            logger.info(f"New PR #{pr_number} detected with {len(files_changed)} changed files, generating AI analysis...")
+            await _generate_ai_insight_for_pr(pr_record)
+            # Broadcast as new PR with insight generation
+            await websocket_manager.broadcast_pr_state_update(repo_id, pr_number)
+        elif existing_insights:
+            logger.info(f"PR #{pr_number} update detected (status/approval change), broadcasting updated state...")
+            # Broadcast as state update only
+            await websocket_manager.broadcast_pr_state_update(repo_id, pr_number)
+        else:
+            logger.info(f"PR #{pr_number} has no file changes, skipping insight generation...")
+            # Broadcast as basic update
+            await websocket_manager.broadcast_pr_state_update(repo_id, pr_number)
         
     except Exception as e:
-        logger.error(f"Failed to get aggregated PR state for PR #{pr_number} in repo {repo_id}", exception=e)
-        return None
+        logger.error(f"Failed to process PR #{pr_number} in repo {repo_id}", exception=e)
+        raise e
+    finally:
+        PROCESSING_EVENTS.discard(record_id)
 
 
-async def _generate_ai_insight_for_pr(repo_id: str, pr_number: int):
+async def process_new_pipeline(pipeline_record: dict):
     """
-    Generate AI insights for a PR if it has files_changed data.
+    Process a new or updated pipeline run.
+    """
+    repo_id = pipeline_record['repo_id']
+    pr_number = pipeline_record['pr_number']
+    record_id = pipeline_record['id']
+    
+    if record_id in PROCESSING_EVENTS:
+        logger.warning(f"Pipeline record {record_id} is already being processed. Skipping.")
+        return
+    
+    PROCESSING_EVENTS.add(record_id)
+    
+    try:
+        logger.info(f"Processing pipeline update for PR #{pr_number} in repository {repo_id}")
+        
+        # Broadcast pipeline state change
+        await websocket_manager.broadcast_pr_state_update(repo_id, pr_number)
+        
+    except Exception as e:
+        logger.error(f"Failed to process pipeline for PR #{pr_number} in repo {repo_id}", exception=e)
+        raise e
+    finally:
+        PROCESSING_EVENTS.discard(record_id)
+
+
+async def process_new_insight(insight_record: dict):
+    """
+    Process a new insight (usually generated by AI).
+    """
+    repo_id = insight_record['repo_id']
+    pr_number = insight_record['pr_number']
+    record_id = insight_record['id']
+    
+    if record_id in PROCESSING_EVENTS:
+        logger.warning(f"Insight record {record_id} is already being processed. Skipping.")
+        return
+    
+    PROCESSING_EVENTS.add(record_id)
+    
+    try:
+        logger.info(f"Processing new insight for PR #{pr_number} in repository {repo_id}")
+        
+        # Broadcast insight update
+        await websocket_manager.broadcast_pr_state_update(repo_id, pr_number)
+        
+    except Exception as e:
+        logger.error(f"Failed to process insight for PR #{pr_number} in repo {repo_id}", exception=e)
+        raise e
+    finally:
+        PROCESSING_EVENTS.discard(record_id)
+
+
+async def _generate_ai_insight_for_pr(pr_record: dict):
+    """
+    Generate AI insights for a PR using the files_changed data.
     Returns True if insights were generated, False otherwise.
     """
     try:
-        # Get PR data with files_changed
-        pr_data = await db_helpers.select_one(
-            "pull_requests",
-            where={"repo_id": repo_id, "pr_number": pr_number}
-        )
-        
-        if not pr_data:
-            logger.warning(f"PR #{pr_number} not found for AI insight generation")
-            return False
+        repo_id = pr_record['repo_id']
+        pr_number = pr_record['pr_number']
         
         # Check if we have files_changed data
-        files_changed = pr_data.get('files_changed', [])
+        files_changed = pr_record.get('files_changed', [])
         if not files_changed:
             logger.info(f"No files_changed data for PR #{pr_number}, skipping AI insight generation")
             return False
         
-        # Generate AI insights
+        # Generate AI insights using the AI service
         logger.info(f"Generating AI insights for PR #{pr_number} with {len(files_changed)} changed files")
-        ai_insight_json = await ai_service.get_ai_insights(pr_data)
+        ai_insight_json = await ai_service.get_ai_insights(pr_record)
         
         if ai_insight_json:
-            # Store the insights in the database
+            # Store the insights in the database with processed=false initially
             insight_record = {
                 "repo_id": repo_id,
                 "pr_number": pr_number,
-                "commit_sha": pr_data.get("commit_sha"),
-                "author": pr_data.get("author"),
-                "avatar_url": pr_data.get("author_avatar"),
-                "risk_level": ai_insight_json.get("riskLevel", "low").lower(),
+                "commit_sha": pr_record.get("commit_sha"),
+                "author": pr_record.get("author"),
+                "avatar_url": pr_record.get("author_avatar"),
+                "risk_level": ai_insight_json.get("risk_level", ai_insight_json.get("riskLevel", "low")).lower(),
                 "summary": ai_insight_json.get("summary"),
                 "recommendation": ai_insight_json.get("recommendation"),
+                "processed": False  # Will be processed by the poller
             }
             
             await db_helpers.insert("insights", insight_record)
@@ -124,97 +171,5 @@ async def _generate_ai_insight_for_pr(repo_id: str, pr_number: int):
             return False
             
     except Exception as e:
-        logger.error(f"Failed to generate AI insight for PR #{pr_number} in repo {repo_id}", exception=e)
+        logger.error(f"Failed to generate AI insight for PR #{pr_number}", exception=e)
         return False
-
-
-async def process_notification_by_type_and_id(event_type: str, record_id: str):
-    """
-    Processes database notifications from the new trigger system.
-    Handles pr_event, pipeline_event, and insight_event notifications.
-    """
-    logger.info(f"Processing {event_type} notification for record ID: {record_id}")
-    
-    if record_id in PROCESSING_EVENTS:
-        logger.warning(f"Record {record_id} is already being processed. Skipping.")
-        return
-    
-    PROCESSING_EVENTS.add(record_id)
-    
-    try:
-        repo_id = None
-        pr_number = None
-        should_generate_insights = False
-        
-        if event_type == "pr_event":
-            # Handle pull request events
-            pr_record = await db_helpers.select_one("pull_requests", where={"id": record_id})
-            if pr_record:
-                repo_id = pr_record['repo_id']
-                pr_number = pr_record['pr_number']
-                
-                # Check if this is a new PR or updated with new files
-                files_changed = pr_record.get('files_changed', [])
-                if files_changed:
-                    # Check if we already have insights for this PR
-                    existing_insights = await db_helpers.select(
-                        "insights",
-                        where={"repo_id": repo_id, "pr_number": pr_number},
-                        limit=1
-                    )
-                    
-                    # Generate insights if none exist
-                    if not existing_insights:
-                        should_generate_insights = True
-                        logger.info(f"New PR #{pr_number} with file changes detected, will generate AI insights")
-                
-        elif event_type == "pipeline_event":
-            # Handle pipeline events
-            pipeline_record = await db_helpers.select_one("pipeline_runs", where={"id": record_id})
-            if pipeline_record:
-                repo_id = pipeline_record['repo_id']
-                pr_number = pipeline_record['pr_number']
-                
-        elif event_type == "insight_event":
-            # Handle insight events
-            insight_record = await db_helpers.select_one("insights", where={"id": record_id})
-            if insight_record:
-                repo_id = insight_record['repo_id']
-                pr_number = insight_record['pr_number']
-        
-        # If we couldn't determine repo_id and pr_number, log and exit
-        if not repo_id or not pr_number:
-            logger.warning(f"Could not determine repo_id and pr_number for {event_type} record {record_id}")
-            return
-        
-        # Generate AI insights if needed (for PR events with file changes)
-        if should_generate_insights:
-            insights_generated = await _generate_ai_insight_for_pr(repo_id, pr_number)
-            if insights_generated:
-                logger.info(f"AI insights generated for PR #{pr_number}, will broadcast updated state")
-        
-        # Get the complete aggregated state and broadcast to WebSocket clients
-        aggregated_state = await _get_aggregated_pr_state(repo_id, pr_number)
-        if aggregated_state:
-            await websocket_manager.broadcast_json(aggregated_state)
-            logger.success(f"Broadcasted {event_type} update for PR #{pr_number} in repository {repo_id}")
-        else:
-            logger.warning(f"Could not get aggregated state for PR #{pr_number} in repository {repo_id}")
-            
-    except Exception as e:
-        logger.error(f"Critical failure during processing of {event_type} record {record_id}", exception=e)
-        # Re-raise the exception so it can be handled by the caller
-        raise e
-    finally:
-        # Always remove from processing set
-        PROCESSING_EVENTS.discard(record_id)
-
-
-# Legacy function for backward compatibility (if event_poller still needs it)
-async def process_event_by_id(event_id: str):
-    """
-    Legacy function for backward compatibility.
-    This should not be used with the new schema since raw_events table no longer exists.
-    """
-    logger.warning(f"Legacy process_event_by_id called with event_id {event_id}. This function is deprecated with the new schema.")
-    # This function is now a no-op since raw_events table doesn't exist

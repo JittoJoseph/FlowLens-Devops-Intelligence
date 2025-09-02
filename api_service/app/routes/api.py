@@ -50,7 +50,7 @@ async def get_repositories():
 async def get_pull_requests(repository_id: Optional[str] = Query(None, description="Filter by repository ID")):
     """
     Returns pull requests with optional repository filtering.
-    Includes all fields using SELECT * for flexibility.
+    Excludes files_changed field (internal only) and simplifies history.
     """
     logger.info(f"Fetching pull requests{f' for repository {repository_id}' if repository_id else ' (all repositories)'}...")
     try:
@@ -63,8 +63,26 @@ async def get_pull_requests(repository_id: Optional[str] = Query(None, descripti
             desc=True
         )
         
-        # Serialize datetime fields and return all fields
-        response_data = [_serialize_datetime_fields(pr) for pr in pull_requests]
+        # Process each PR to exclude files_changed and simplify history
+        response_data = []
+        for pr in pull_requests:
+            pr_data = _serialize_datetime_fields(pr)
+            
+            # Remove files_changed field (internal only)
+            pr_data.pop('files_changed', None)
+            
+            # Simplify history to only state + timestamp
+            original_history = pr_data.get('history', [])
+            simplified_history = []
+            for history_item in original_history:
+                if isinstance(history_item, dict) and 'state' in history_item:
+                    simplified_history.append({
+                        "state": history_item['state'],
+                        "timestamp": history_item.get('at', history_item.get('timestamp', ''))
+                    })
+            pr_data['history'] = simplified_history
+            
+            response_data.append(pr_data)
         
         logger.success(f"Successfully fetched {len(response_data)} pull requests.")
         return response_data
@@ -101,24 +119,44 @@ async def get_pipeline_runs(repository_id: Optional[str] = Query(None, descripti
 
 
 @router.get("/insights")
-async def get_insights(repository_id: Optional[str] = Query(None, description="Filter by repository ID")):
+async def get_insights(
+    repository_id: Optional[str] = Query(None, description="Filter by repository ID"),
+    pr_id: Optional[int] = Query(None, description="Filter by PR number")
+):
     """
-    Returns AI insights with optional repository filtering.
-    Includes all fields using SELECT * for flexibility.
+    Returns AI insights with optional repository and PR filtering.
     """
-    logger.info(f"Fetching insights{f' for repository {repository_id}' if repository_id else ' (all repositories)'}...")
+    logger.info(f"Fetching insights{f' for repository {repository_id}' if repository_id else ''}{f' for PR #{pr_id}' if pr_id else ''}...")
     try:
-        where_clause = {"repo_id": repository_id} if repository_id else None
-        
+        where_clause = {}
+        if repository_id:
+            where_clause["repo_id"] = repository_id
+        if pr_id:
+            where_clause["pr_number"] = pr_id
+            
         insights = await db_helpers.select(
             table="insights",
-            where=where_clause,
+            where=where_clause if where_clause else None,
             order_by="created_at",
             desc=True
         )
         
-        # Serialize datetime fields and return all fields
-        response_data = [_serialize_datetime_fields(insight) for insight in insights]
+        # Clean and format insights for API response
+        response_data = []
+        for insight in insights:
+            cleaned_insight = {
+                "id": insight['id'],
+                "repo_id": insight['repo_id'],
+                "pr_number": insight['pr_number'],
+                "commit_sha": insight['commit_sha'],
+                "author": insight['author'],
+                "avatar_url": insight['avatar_url'],
+                "risk_level": insight['risk_level'],
+                "summary": insight['summary'],
+                "recommendation": insight['recommendation'],
+                "created_at": insight['created_at'].isoformat() if insight['created_at'] else None
+            }
+            response_data.append(cleaned_insight)
         
         logger.success(f"Successfully fetched {len(response_data)} insights.")
         return response_data
@@ -231,7 +269,7 @@ async def get_all_pull_requests_legacy():
             elif pr_status in ['opened', 'updated']:
                 final_status = status_map.get(pr_status, 'pending')
 
-            # Format for Flutter compatibility
+            # Format for Flutter compatibility (exclude files_changed field)
             response_data.append({
                 "number": pr_data['pr_number'],
                 "title": pr_data['title'],
@@ -244,7 +282,6 @@ async def get_all_pull_requests_legacy():
                 "createdAt": pr_data['created_at'].isoformat(),
                 "updatedAt": pr_data['updated_at'].isoformat(),
                 "status": final_status,
-                "filesChanged": json.dumps(pr_data.get('files_changed', [])),
                 "additions": pr_data['additions'],
                 "deletions": pr_data['deletions'],
                 "branchName": pr_data['branch_name'],

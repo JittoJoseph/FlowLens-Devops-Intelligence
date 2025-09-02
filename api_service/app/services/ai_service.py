@@ -66,6 +66,7 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
     """
     Generates AI insights for a PR using Gemini with enhanced files_changed analysis.
     Expects `pr_data` to have keys like: title, author, branch_name, files_changed, etc.
+    Returns clean JSON with risk_level, summary, recommendation fields.
     """
     if not MODEL_NAME or not PROMPT_TEMPLATE:
         logger.error("AI service is not configured. Cannot get insights.")
@@ -73,6 +74,10 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
 
     # Extract and format files_changed data from the new schema
     files_changed = pr_data.get("files_changed", [])
+    if not files_changed:
+        logger.warning("No files_changed data available for AI analysis")
+        return None
+    
     formatted_files = _format_files_changed(files_changed)
     
     # Build enhanced prompt with actual file change data
@@ -98,35 +103,39 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
             config=generation_config,
         )        
         
-        # --- DEFENSIVE CHECK for empty or invalid responses ---
+        # Check for empty or invalid responses
         if not response or not hasattr(response, 'text') or not response.text:
-            logger.warning(f"Gemini returned an empty or invalid response object for PR #{pr_number}.")
+            logger.warning(f"Gemini returned an empty or invalid response for PR #{pr_number}.")
             return None
         
         cleaned_response = _clean_json_response(response.text)
         
-        # --- ISOLATED JSON PARSING with robust error handling ---
+        # Parse JSON response with robust error handling
         try:
             insight_json = json.loads(cleaned_response)
             
-            # Validate required fields and provide defaults
-            insight_json.setdefault('riskLevel', 'low')
-            insight_json.setdefault('confidenceScore', 0.7)
-            insight_json.setdefault('summary', 'AI analysis completed')
-            insight_json.setdefault('recommendation', 'Review changes carefully')
-            insight_json.setdefault('keyChanges', [])
+            # Clean and validate the response to match our schema exactly
+            cleaned_insight = {
+                "risk_level": insight_json.get('risk_level', insight_json.get('riskLevel', 'low')).lower(),
+                "summary": insight_json.get('summary', 'AI analysis completed'),
+                "recommendation": insight_json.get('recommendation', 'Review changes carefully')
+            }
             
-            logger.success(f"Successfully generated and parsed AI insight for PR #{pr_number}")
-            return insight_json
+            # Validate risk_level is one of the allowed values
+            if cleaned_insight['risk_level'] not in ['low', 'medium', 'high']:
+                cleaned_insight['risk_level'] = 'low'
+            
+            logger.success(f"Successfully generated AI insight for PR #{pr_number}")
+            return cleaned_insight
             
         except json.JSONDecodeError as e:
             logger.error(
-                f"Failed to decode JSON from Gemini response for PR #{pr_number}. The AI returned malformed JSON.",
-                response_text=cleaned_response,
+                f"Failed to decode JSON from Gemini response for PR #{pr_number}. Malformed JSON returned.",
+                response_text=cleaned_response[:200] + "..." if len(cleaned_response) > 200 else cleaned_response,
                 exception=str(e)
             )
             return None
 
     except Exception as e:
-        logger.error(f"An unexpected error occurred with the Gemini API for PR #{pr_number}", exception=e)
+        logger.error(f"Unexpected error with Gemini API for PR #{pr_number}", exception=e)
         return None

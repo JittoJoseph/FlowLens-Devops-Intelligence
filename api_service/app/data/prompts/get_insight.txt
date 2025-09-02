@@ -4,15 +4,9 @@ Analyze the provided commit details and return a JSON object ONLY. Do not add an
 
 Your JSON response must conform to this exact structure:
 {{
-  "riskLevel": "Low | Medium | High",
-  "confidenceScore": <a float between 0.0 and 1.0 representing your confidence in the risk assessment>,
+  "risk_level": "low | medium | high",
   "summary": "<A concise, one-sentence summary for a non-technical manager, explaining the business impact of the change>",
-  "recommendation": "<A clear, actionable next step for the engineering team. Be specific.>",
-  "keyChanges": [
-    "<A summary of the most important file or logic change>",
-    "<A summary of another significant change>",
-    "<If applicable, a third key change summary>"
-  ]
+  "recommendation": "<A clear, actionable next step for the engineering team. Be specific.>"
 }}
 
 Commit Data:
@@ -25,8 +19,8 @@ Files Changed Analysis:
 ---
 
 Risk Assessment Guidelines:
-- Low: Documentation, minor styling, configuration tweaks
-- Medium: Feature additions, non-breaking API changes, test improvements
-- High: Database migrations, security changes, breaking API changes, core business logic modifications
+- low: Documentation, minor styling, configuration tweaks
+- medium: Feature additions, non-breaking API changes, test improvements
+- high: Database migrations, security changes, breaking API changes, core business logic modifications
 
 Focus on business impact and provide practical recommendations for code review and deployment planning.

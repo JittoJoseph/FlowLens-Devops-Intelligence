@@ -5,7 +5,7 @@
 The FlowLens API Service v2.0 is the central intelligence layer for the FlowLens platform, completely refactored to support a **repository-centric architecture**. Written in Python using FastAPI, it provides:
 
 - **Repository Management:** Multi-repository support with comprehensive metadata tracking
-- **Real-time Processing:** Direct database trigger integration for instant event processing
+- **Polling-Based Processing:** Reliable 2-second polling system for consistent event processing
 - **Enhanced AI Insights:** Advanced file change analysis using Google Gemini with actual diff data
 - **Flexible APIs:** New RESTful endpoints with optional repository filtering
 - **WebSocket Broadcasting:** Real-time updates for all connected clients
@@ -16,33 +16,33 @@ This service transforms raw GitHub webhook data into actionable intelligence acr
 
 ## 2. Architecture & Data Flow - v2.0
 
-The new architecture uses **database triggers** for real-time event processing, eliminating the need for a `raw_events` table and providing instant responsiveness.
+The new architecture uses **2-second database polling** with `processed` flags for reliable event processing, ensuring no updates are missed.
 
 ```
 +-------------------+      (Webhook)       +---------------------+
 |      GitHub       | -------------------> | Ingestion Service   |
 | (Multiple Repos)  |                      |      (Node.js)      |
 +-------------------+                      +----------+----------+
-                                                      | (Direct Table Writes)
+                                                      | (Sets processed=FALSE)
                                                       v
 +----------------------------------------------------------------------------------------------------------------------+
 |                                    Database (YugabyteDB) - Repository-Centric Schema                                |
 |                                                                                                                      |
 | +----------------+   +-------------------+   +-------------------+   +-------------------+   +-----------------+   |
-| | repositories   |   | pull_requests     |   | pipeline_runs     |   | insights          |   | DB Triggers     |   |
-| | (master data)  |<--| (linked by        |   | (status tracking) |   | (AI generated)    |   | (notifications) |   |
+| | repositories   |   | pull_requests     |   | pipeline_runs     |   | insights          |   | processed=FALSE |   |
+| | (master data)  |<--| (linked by        |   | (status tracking) |   | (AI generated)    |   | (polling flags) |   |
 | |                |   |  repo_id)         |   | (repo_id + pr_#)  |   | (repo_id + pr_#)  |   |                 |   |
 | +----------------+   +-------------------+   +-------------------+   +----------+--------+   +--------+--------+   |
 +------------------------------------------------------------------------------------------------------------------------+
                                       ^                                              |                     |
-                                      | (Real-time Queries)                         | (AI Processing)     | (Notifications)
+                                      | (2s Polling Queries)                        | (AI Processing)     | (State Changes)
                                       |                                              v                     v
 +-----------------------------------------------------------------------------------------------------------------+
 |                                        FlowLens API Service v2.0 (Python)                               |
 |                                                                                                         |
 |  +--------------------+     +-------------------------+     +----------------------------------+        |
-|  | DB Trigger Listener| --> | AI Insights (Enhanced)  | --> | Repository-Aware Broadcasting   |        |
-|  | (3 event types)    |     | (files_changed analysis)|     | (WebSocket + REST APIs)         |        |
+|  | Database Poller    | --> | AI Insights (Enhanced)  | --> | Repository-Aware Broadcasting   |        |
+|  | (processed=FALSE)  |     | (files_changed analysis)|     | (WebSocket + REST APIs)         |        |
 |  +--------------------+     +-------------------------+     +----------------------------------+        |
 +-----------------------------------------------------------------------------------------------------------------+
                                              | (Repository-filtered APIs)
@@ -56,7 +56,7 @@ The new architecture uses **database triggers** for real-time event processing, 
 
 **Key Improvements in v2.0:**
 
-1. **Database Triggers**: `pr_event`, `pipeline_event`, `insight_event` for instant notifications
+1. **Database Polling**: 2-second polling with `processed` flags for reliable change detection
 2. **Repository-Centric**: All data linked through `repo_id` foreign keys
 3. **Enhanced AI**: Uses actual `files_changed` JSON data with patches and diffs
 4. **Multi-Repository**: Support for tracking multiple repositories simultaneously
@@ -340,18 +340,31 @@ docker run -p 8000:8000 --env-file .env flowlens-api:v2.0
 ### Major Changes
 
 - ✅ **Repository-centric architecture** - Multi-repo support
-- ✅ **Database trigger integration** - Real-time processing
-- ✅ **Enhanced AI insights** - Actual file change analysis
+- ✅ **Polling-based processing** - Reliable 2-second polling with `processed` flags
+- ✅ **Enhanced AI insights** - Actual file change analysis with Gemini
 - ✅ **Flexible API design** - Optional repository filtering
 - ✅ **Improved WebSocket system** - Aggregated state broadcasting
-- ❌ **Removed raw_events table** - Direct trigger-based processing
-- ❌ **Removed event polling dependency** - Triggers provide real-time updates
+- ❌ **Removed raw_events table** - Direct database polling approach
+- ❌ **Removed database triggers** - Simplified to polling for reliability
+
+### ⚠️ Critical Integration Requirement
+
+**For the ingestion service:** When updating ANY existing record in `pull_requests`, `pipeline_runs`, or `insights`, you **MUST** set `processed = FALSE` so the API service picks up the changes.
+
+```sql
+-- Example: When updating PR status
+UPDATE pull_requests
+SET state = 'merged', processed = FALSE, updated_at = now()
+WHERE repo_id = $1 AND pr_number = $2;
+```
+
+**See `INTEGRATION_GUIDE.md` for complete details.**
 
 ### Backward Compatibility
 
 - Legacy `/api/prs` and `/api/repository` endpoints maintained
 - WebSocket message format enhanced but compatible
-- Environment configuration extended with new options
+- Environment configuration simplified (removed trigger-related settings)
 
 ---
 

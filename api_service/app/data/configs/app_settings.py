@@ -22,20 +22,10 @@ class AppSettings(BaseSettings):
     POOL_MAX_SIZE: int = 10
     POOL_ACQUIRE_TIMEOUT: int = 30
 
-    # Database Listener 
-    DATABASE_URL_LISTENER: Optional[str] = None
-    # Updated: LISTEN mode is now the primary mode for the new trigger system
-    EVENT_PROCESSING_MODE: Literal["LISTEN", "POLL"] = "LISTEN"
-
     # Services
     GEMINI_API_KEY: str
     GEMINI_AI_MODEL: str = "gemini-2.5-flash"
     AI_TEMP: float = 0.5
     AI_MAX_TOKEN: int = 1024
-
-    @property
-    def LISTENER_DATABASE_URL(self) -> str:
-        """Returns the specific listener URL if provided, otherwise falls back to the main DB URL."""
-        return self.DATABASE_URL_LISTENER or self.DATABASE_URL
 
 settings = AppSettings()
