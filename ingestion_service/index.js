@@ -43,18 +43,6 @@ async function ensureSchemaExists() {
 
     if (missing.length === 0) {
       console.log("✅ All expected tables exist");
-
-      // Still ensure triggers are applied
-      try {
-        const triggerPath = path.join(__dirname, "trigger.sql");
-        if (fs.existsSync(triggerPath)) {
-          const triggerSql = fs.readFileSync(triggerPath, "utf8");
-          await pool.query(triggerSql);
-          console.log("✅ trigger.sql applied successfully");
-        }
-      } catch (triggerErr) {
-        console.warn("⚠️ Trigger application warning:", triggerErr.message);
-      }
       return;
     }
 
@@ -79,30 +67,10 @@ async function ensureSchemaExists() {
     await pool.query(schemaSql);
 
     console.log("✅ schema.sql applied successfully");
-
-    // Apply triggers after schema is created
-    const triggerPath = path.join(__dirname, "trigger.sql");
-    if (fs.existsSync(triggerPath)) {
-      const triggerSql = fs.readFileSync(triggerPath, "utf8");
-      await pool.query(triggerSql);
-      console.log("✅ trigger.sql applied successfully");
-    }
   } catch (err) {
     // Handle case where schema already exists
     if (err.message.includes("already exists")) {
       console.log("⚠️ Some schema objects already exist, continuing...");
-
-      // Still try to apply triggers
-      try {
-        const triggerPath = path.join(__dirname, "trigger.sql");
-        if (fs.existsSync(triggerPath)) {
-          const triggerSql = fs.readFileSync(triggerPath, "utf8");
-          await pool.query(triggerSql);
-          console.log("✅ trigger.sql applied successfully");
-        }
-      } catch (triggerErr) {
-        console.warn("⚠️ Trigger application warning:", triggerErr.message);
-      }
     } else {
       console.error("❌ Failed to ensure schema exists:", err.message);
       throw err;
@@ -1153,8 +1121,8 @@ async function upsertPullRequest(prData, repoId) {
       repo_id, pr_number, title, description, author, author_avatar, commit_sha,
       branch_name, base_branch, pr_url, commit_urls, files_changed, additions, deletions,
       changed_files, commits_count, labels, assignees, reviewers, is_draft, state,
-      merged, merged_at, closed_at, created_at, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW())
+      merged, merged_at, closed_at, processed, created_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, FALSE, NOW(), NOW())
     ON CONFLICT (repo_id, pr_number)
     DO UPDATE SET
       title = EXCLUDED.title,
@@ -1177,6 +1145,7 @@ async function upsertPullRequest(prData, repoId) {
       merged = EXCLUDED.merged,
       merged_at = EXCLUDED.merged_at,
       closed_at = EXCLUDED.closed_at,
+      processed = FALSE,
       updated_at = NOW()
   `;
 
@@ -1217,7 +1186,7 @@ async function upsertPullRequest(prData, repoId) {
     });
 
     await pool.query(
-      `UPDATE pull_requests SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($1::jsonb) WHERE repo_id = $2 AND pr_number = $3`,
+      `UPDATE pull_requests SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($1::jsonb), processed = FALSE WHERE repo_id = $2 AND pr_number = $3`,
       [historyEntry, repoId, prData.pr_number]
     );
   } catch (error) {
@@ -1232,14 +1201,15 @@ async function upsertPullRequest(prData, repoId) {
 async function upsertPipelineRun(repoId, prNumber, data) {
   const query = `
     INSERT INTO pipeline_runs (
-      repo_id, pr_number, commit_sha, author, avatar_url, title, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      repo_id, pr_number, commit_sha, author, avatar_url, title, processed, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, FALSE, NOW())
     ON CONFLICT (repo_id, pr_number)
     DO UPDATE SET
       commit_sha = EXCLUDED.commit_sha,
       author = EXCLUDED.author,
       avatar_url = EXCLUDED.avatar_url,
       title = EXCLUDED.title,
+      processed = FALSE,
       updated_at = NOW()
   `;
 
@@ -1308,6 +1278,7 @@ async function updatePipelineStatus(
       UPDATE pipeline_runs
       SET ${statusField} = $1,
           history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($2::jsonb),
+          processed = FALSE,
           updated_at = NOW()
       WHERE repo_id = $3 AND pr_number = $4
     `;
@@ -1353,6 +1324,7 @@ async function updatePRStateHistory(repoId, prNumber, state, meta = null) {
       `
       UPDATE pull_requests 
       SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array($1::jsonb),
+          processed = FALSE,
           updated_at = NOW()
       WHERE repo_id = $2 AND pr_number = $3
     `,

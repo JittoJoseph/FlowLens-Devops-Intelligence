@@ -1,266 +1,372 @@
-# FlowLens API Service
+# FlowLens API Service v2.0 - Repository-Centric Architecture
 
 ## 1. Overview
 
-The FlowLens API Service is the central data hub and intelligence layer for the entire FlowLens platform. Written in Python using the FastAPI framework, its core responsibilities are:
+The FlowLens API Service v2.0 is the central intelligence layer for the FlowLens platform, completely refactored to support a **repository-centric architecture**. Written in Python using FastAPI, it provides:
 
-*   **Data Enrichment:** It polls the database for new, unprocessed GitHub events and enriches them with AI-powered insights using the Gemini API.
-*   **Data Serving:** It provides a set of clean, aggregated REST endpoints for the Flutter application to fetch its initial state.
-*   **Real-time Notifications:** It pushes live updates to all connected clients via WebSockets whenever the state of a pull request changes.
+- **Repository Management:** Multi-repository support with comprehensive metadata tracking
+- **Polling-Based Processing:** Reliable 2-second polling system for consistent event processing
+- **Enhanced AI Insights:** Advanced file change analysis using Google Gemini with actual diff data
+- **Flexible APIs:** New RESTful endpoints with optional repository filtering
+- **WebSocket Broadcasting:** Real-time updates for all connected clients
 
 This service acts as the "brain" of the operation, transforming raw event data into actionable intelligence and ensuring the frontend is always up-to-date.
 
 <!--(DOCS still needs to updated as there's new event listening setup from DB)-->
 ---
 
-## 2. Architecture & Data Flow
+## 2. Architecture & Data Flow - v2.0
 
-The API service operates on a **resilient polling mechanism**, decoupling it from the `ingestion-service`. The database (YugabyteDB) serves as the message queue between the two services.
+The new architecture uses **2-second database polling** with `processed` flags for reliable event processing, ensuring no updates are missed.
 
 ```
 +-------------------+      (Webhook)       +---------------------+
 |      GitHub       | -------------------> | Ingestion Service   |
-+-------------------+                      |      (Node.js)      |
-                                           +----------+----------+
-                                                      | (Writes to DB)
+| (Multiple Repos)  |                      |      (Node.js)      |
++-------------------+                      +----------+----------+
+                                                      | (Sets processed=FALSE)
                                                       v
-+-----------------------------------------------------+------------------------------------------------------+
-|                                         Database (YugabyteDB)                                              |
-|                                                                                                            |
-| +------------------+   +--------------------+   +-----------------+   +----------------------------------+ |
-| |  raw_events      |   | pull_requests      |   | pipeline_runs   |   | insights                         | |
-| | (processed=false)|   | (PR metadata)      |   | (CI/CD status)  |   | (AI-generated)                   | |
-| +-------^----------+   +--------------------+   +-----------------+   +----------------^-----------------+ |
-+---------|------------------------------------------------------------------------------|-------------------+
-          | (Polls every 2s)                                                             | (Writes to DB)
-          v                                                                              |
-+---------+------------------------------------------------------------------------------+---------+
-|                                        FlowLens API Service (Python)                               |
-|                                                                                                    |
-|  +---------------------+        +-----------------------+        +-------------------------------+ |
-|  | Event Poller        | -----> | AI Enrichment (Gemini)| -----> |   Data Aggregation & Serving  | |
-|  | (Checks raw_events) |        | (Generates insights)  |        | (REST API & WebSocket Manager)| |
-|  +---------------------+        +-----------------------+        +-------------------------------+ |
-+--------------------------------------------+-------------------------------------------------------+
-                                             | (REST API for initial load)
-                                             | (WebSocket for live updates)
++----------------------------------------------------------------------------------------------------------------------+
+|                                    Database (YugabyteDB) - Repository-Centric Schema                                |
+|                                                                                                                      |
+| +----------------+   +-------------------+   +-------------------+   +-------------------+   +-----------------+   |
+| | repositories   |   | pull_requests     |   | pipeline_runs     |   | insights          |   | processed=FALSE |   |
+| | (master data)  |<--| (linked by        |   | (status tracking) |   | (AI generated)    |   | (polling flags) |   |
+| |                |   |  repo_id)         |   | (repo_id + pr_#)  |   | (repo_id + pr_#)  |   |                 |   |
+| +----------------+   +-------------------+   +-------------------+   +----------+--------+   +--------+--------+   |
++------------------------------------------------------------------------------------------------------------------------+
+                                      ^                                              |                     |
+                                      | (2s Polling Queries)                        | (AI Processing)     | (State Changes)
+                                      |                                              v                     v
++-----------------------------------------------------------------------------------------------------------------+
+|                                        FlowLens API Service v2.0 (Python)                               |
+|                                                                                                         |
+|  +--------------------+     +-------------------------+     +----------------------------------+        |
+|  | Database Poller    | --> | AI Insights (Enhanced)  | --> | Repository-Aware Broadcasting   |        |
+|  | (processed=FALSE)  |     | (files_changed analysis)|     | (WebSocket + REST APIs)         |        |
+|  +--------------------+     +-------------------------+     +----------------------------------+        |
++-----------------------------------------------------------------------------------------------------------------+
+                                             | (Repository-filtered APIs)
+                                             | (Real-time WebSocket updates)
                                              v
                                      +-------+-------+
                                      | Flutter App   |
+                                     | (Multi-repo)  |
                                      +---------------+
 ```
 
-**The flow is as follows:**
-1.  The **Ingestion Service** receives a webhook, performs data extraction into the `pull_requests` and `pipeline_runs` tables, and critically, inserts a record into `raw_events` with `processed = false`.
-2.  The **API Service** runs a background poller that queries the `raw_events` table for rows where `processed = false`.
-3.  For each unprocessed event, the API service triggers the **AI Enrichment** logic if it's a code-changing event (e.g., a new PR or a push to an existing one).
-4.  The generated analysis is saved to the `insights` table.
-5.  Only after successful processing, the `raw_events` row is marked as `processed = true`. If processing fails, the event will be retried.
-6.  Finally, the service fetches the complete, latest state of the affected pull request and **broadcasts it via WebSocket** to all connected Flutter clients.
+**Key Improvements in v2.0:**
+
+1. **Database Polling**: 2-second polling with `processed` flags for reliable change detection
+2. **Repository-Centric**: All data linked through `repo_id` foreign keys
+3. **Enhanced AI**: Uses actual `files_changed` JSON data with patches and diffs
+4. **Multi-Repository**: Support for tracking multiple repositories simultaneously
+5. **Flexible APIs**: Optional repository filtering across all endpoints
 
 ---
 
-## 3. Getting Started
+## 3. New API Endpoints v2.0
+
+### Core Resource Endpoints
+
+#### `GET /api/repositories`
+
+- **Description:** Returns all repositories tracked by the system
+- **Features:** Complete metadata, statistics, activity tracking
+- **Response:** Array of repository objects with all database fields
+
+#### `GET /api/pull-requests?repository_id={uuid}`
+
+- **Description:** Returns pull requests with optional repository filtering
+- **Query Parameters:**
+  - `repository_id` (optional): Filter by specific repository UUID
+- **Response:** Array of PR objects with complete metadata and file changes
+
+#### `GET /api/pipelines?repository_id={uuid}`
+
+- **Description:** Returns pipeline runs with optional repository filtering
+- **Features:** Complete CI/CD status tracking, history timeline
+- **Response:** Array of pipeline objects with status progression
+
+#### `GET /api/insights?repository_id={uuid}`
+
+- **Description:** Returns AI insights with optional repository filtering
+- **Features:** Enhanced analysis using actual file changes and diffs
+- **Response:** Array of insight objects with risk assessments
+
+#### `GET /api/insights/{pr_number}?repository_id={uuid}`
+
+- **Description:** Historical insights for a specific PR
+- **Features:** Chronological insight evolution, cross-repository support
+- **Response:** Array of insights for the specified PR
+
+### Legacy Compatibility Endpoints
+
+#### `GET /api/prs` (Legacy)
+
+- **Description:** Aggregated PR data for existing Flutter apps
+- **Features:** Maintains backward compatibility with v1.0 clients
+- **Response:** Formatted for existing Flutter models
+
+#### `GET /api/repository` (Legacy)
+
+- **Description:** Repository metadata for single-repo clients
+- **Features:** Returns primary repository or static demo data
+- **Response:** Single repository object in v1.0 format
+
+---
+
+## 4. Enhanced AI Insights System
+
+### Files Changed Analysis
+
+The v2.0 system processes actual file change data from GitHub webhooks:
+
+```json
+{
+  "files_changed": [
+    {
+      "filename": "src/app/page.tsx",
+      "status": "modified",
+      "additions": 20,
+      "deletions": 99,
+      "changes": 119,
+      "patch": "@@ -14,107 +14,28 @@ export default function Home() {\n   };\n \n   return (\n-    <div className=\"min-h-screen bg-gradient..."
+    }
+  ]
+}
+```
+
+### AI Processing Flow
+
+1. **Trigger Detection:** New PR with `files_changed` data
+2. **Data Extraction:** Parse filenames, changes, and diff patches
+3. **Enhanced Prompting:** Send structured file analysis to Gemini
+4. **Insight Generation:** Risk assessment, recommendations, key changes
+5. **Storage & Broadcasting:** Save to `insights` table, notify clients
+
+---
+
+## 5. Real-Time Event Processing
+
+### Database Trigger System
+
+Three notification channels provide instant event processing:
+
+- **`pr_event`**: Pull request creation, updates, merges
+- **`pipeline_event`**: CI/CD status changes, build results
+- **`insight_event`**: New AI insights generated
+
+### Processing Pipeline
+
+1. **Trigger Fires:** Database change detected
+2. **Notification Sent:** Record UUID broadcasted via PostgreSQL NOTIFY
+3. **Listener Receives:** API service processes notification instantly
+4. **AI Generation:** Enhanced insights for PRs with file changes
+5. **State Aggregation:** Complete repository/PR state assembled
+6. **WebSocket Broadcast:** Real-time updates pushed to all clients
+
+---
+
+## 6. Getting Started v2.0
 
 ### Prerequisites
-*   Python 3.11+
-*   A running YugabyteDB (or any PostgreSQL-compatible) instance.
-*   API Key for Google Gemini.
+
+- Python 3.11+
+- YugabyteDB with repository-centric schema
+- Google Gemini API key
 
 ### Setup & Installation
-1.  **Clone the repository:**
+
+1.  **Clone and navigate:**
     ```bash
     git clone <repository_url>
     cd api_service
     ```
-2.  **Create and activate a virtual environment:**
+2.  **Virtual environment:**
     ```bash
     python -m venv __venv__
-    source __venv__/bin/activate
+    source __venv__/bin/activate  # or .\\__venv__\\Scripts\\activate on Windows
     ```
 3.  **Install dependencies:**
     ```bash
     pip install -r requirements.txt
     ```
-4.  **Configure environment variables:**
-    Copy the example file and fill in your details.
+4.  **Configure environment:**
+
     ```bash
     cp .env.example .env
     ```
-    Now, edit `.env`:
+
+    Edit `.env` with your settings:
+
     ```env
-    # .env
-    DEBUG=True # for production, set it as False 
-    HOST="0.0.0.0"
-    PORT=8000
-
+    # Database Configuration
     DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require"
-    
-    # Google Gemini Configuration
+
+    # AI Configuration
     GEMINI_API_KEY="your_google_gemini_api_key_here"
-    GEMINI_AI_MODEL="gemini-1.5-flash" # Or another supported model
+    GEMINI_AI_MODEL="gemini-2.5-flash"
 
-    # Gunicorn settings for production 
-    WORKERS = 1
-    WORKER_CONNECTIONS = 1000
-    GUNICORN_TIMEOUT = 120
-    KEEP_ALIVE = 5
-    GRACEFUL_TIMEOUT = 120
+    # Processing Mode (LISTEN for triggers, POLL for fallback)
+    EVENT_PROCESSING_MODE="LISTEN"
+
+    # Production Settings
+    DEBUG=False
+    WORKERS=1
     ```
+
 5.  **Run the service:**
-    > For a single worker environment (development):
-    > ```bash
-    > uvicorn app.main:app --reload
-    > ```
-    > For multiple workers using Gunicorn (production):
-    > ```bash
-    > python server_runner.py
-    > ```
-    The API will be available at `http://localhost:8000`.
+
+    ```bash
+    # Development
+    uvicorn app.main:app --reload
+
+    # Production
+    python server_runner.py
+    ```
 
 ---
 
-## 4. API Endpoints
+## 7. WebSocket Real-Time Updates
 
-This service exposes a REST API for initial data loading and a WebSocket for real-time updates.
+### Connection
 
-### REST API
+- **URL:** `ws://localhost:8000/ws`
+- **Protocol:** JSON message broadcasting
 
-#### `GET /api/prs`
-*   **Description:** Fetches an array of all pull requests, formatted for the main dashboard view. This should be called once when the Flutter app starts.
-*   **Success Response (200 OK):**
-    ```json
-    [
-      {
-        "number": 101,
-        "title": "Fix: Payment processing fails for international cards",
-        "author": "frontend-dev",
-        "authorAvatar": "https://avatars.githubusercontent.com/u/3",
-        "commitSha": "f4b3c2d1a0e9f8g7h6i5j4k3l2m1n0o9",
-        "repositoryName": "DevByZero/FlowLens-Demo",
-        "createdAt": "2025-08-31T05:42:59.568393+00:00",
-        "updatedAt": "2025-08-31T05:42:59.568393+00:00",
-        "status": "buildPassed",
-        "filesChanged": "[]",
-        "additions": 15,
-        "deletions": 12,
-        "branchName": "hotfix/payment-gateway",
-        "isDraft": false
-      }
-    ]
-    ```
+### Message Format
 
-#### `GET /api/insights/{pr_number}`
-*   **Description:** Fetches a list of all historical AI-generated insights for a specific pull request, ordered from newest to oldest.
-*   **Success Response (200 OK):**
-    ```json
-    [
-      {
-        "id": "464fbd91-f695-46d0-b8a3-fcd5e6c5c71e",
-        "prNumber": 101,
-        "commitSha": "f4b3c2d1a0e9f8g7h6i5j4k3l2m1n0o9",
-        "riskLevel": "high",
-        "summary": "This change will not resolve the critical payment processing issue...",
-        "recommendation": "Do not merge this commit. Investigate why the commit is empty...",
-        "createdAt": "2025-08-31T05:43:10.851242+00:00",
-        "keyChanges": [],
-        "confidenceScore": 0
-      }
-    ]
-    ```
-
-#### `GET /api/repository`
-*   **Description:** Returns static metadata about the repository being monitored.
-*   **Success Response (200 OK):**
-    ```json
-    {
-      "name": "FlowLens-Demo",
-      "fullName": "DevByZero/FlowLens-Demo",
-      "description": "AI-Powered DevOps Workflow Visualizer",
-      "owner": "DevByZero",
-      "ownerAvatar": "https://avatars.githubusercontent.com/u/1",
-      "isPrivate": true,
-      "defaultBranch": "main",
-      "openPRs": 1,
-      "totalPRs": 10,
-      "lastActivity": "2025-08-30T10:00:00Z",
-      "languages": ["Dart", "Python", "Node.js"],
-      "stars": 42,
-      "forks": 12
-    }
-    ```
-
-### WebSocket
-
-#### `GET /ws`
-*   **Description:** Establishes a WebSocket connection for receiving real-time updates.
-*   **Connection URL:** `ws://<your_api_host>/ws`
-*   **Message Format:** The server pushes messages to the client. The client does not need to send messages. Each message is a JSON object with two keys: `event` and `data`.
-*   **Event Type: `pr_update`**
-    *   This is the primary event type. It is sent whenever any aspect of a pull request changes (e.g., new AI insight, build status update).
-    *   The `data` payload contains the **complete, updated state** of the pull request, including nested `pipeline_status` and the latest `ai_insight`.
-    *   **Example Message:**
-        ```json
-        {
-          "event": "pr_update",
-          "data": {
-            "pr_number": 101,
-            "title": "Fix: Payment processing fails for international cards",
-            "description": "This PR attempts to resolve the payment gateway issue.",
-            "author": "frontend-dev",
-            "author_avatar": "https://avatars.githubusercontent.com/u/3",
-            "commit_sha": "f4b3c2d1a0e9f8g7h6i5j4k3l2m1n0o9",
-            "repository_name": "DevByZero/FlowLens-Demo",
-            "branch_name": "hotfix/payment-gateway",
-            "additions": 15,
-            "deletions": 12,
-            "is_draft": false,
-            "created_at": "2025-08-31T05:42:59.568393Z",
-            "updated_at": "2025-08-31T05:43:11.123456Z",
-            "state": "open",
-            "pipeline_status": {
-              "id": "a1b2c3d4-...",
-              "pr_number": 101,
-              "commit_sha": "f4b3c2d1...",
-              "status_pr": "opened",
-              "status_build": "buildPassed",
-              "status_approval": "pending",
-              "status_merge": "pending",
-              "updated_at": "2025-08-31T05:43:11.123456Z"
-            },
-            "ai_insight": {
-              "id": "e5f6g7h8-...",
-              "pr_number": 101,
-              "risk_level": "high",
-              "summary": "This change will not resolve the critical payment processing issue...",
-              "recommendation": "Do not merge this commit.",
-              "created_at": "2025-08-31T05:43:10.851242Z"
-            }
-          }
-        }
-        ```
+```json
+{
+  "event_type": "pr_update",
+  "repository": {
+    "id": "uuid",
+    "name": "repository-name",
+    "full_name": "owner/repository-name",
+    "...": "all repository fields"
+  },
+  "pull_request": {
+    "id": "uuid",
+    "pr_number": 17,
+    "title": "Feature implementation",
+    "files_changed": [...],
+    "...": "all PR fields"
+  },
+  "pipeline": {
+    "status_pr": "pending",
+    "status_build": "buildPassed",
+    "status_approval": "pending",
+    "status_merge": "merged",
+    "...": "all pipeline fields"
+  },
+  "latest_insight": {
+    "risk_level": "medium",
+    "summary": "Significant UI changes detected",
+    "recommendation": "Review styling impacts",
+    "...": "all insight fields"
+  },
+  "timestamp": "2025-09-02T15:30:45.123Z"
+}
+```
 
 ---
 
-## 5. Integration Guide
+## 8. Integration Guide v2.0
 
-### For the Ingestion Service (Node.js) Developer
-This API service relies on the ingestion service to perform two critical tasks for every relevant GitHub webhook:
-1.  **State Management:** Accurately insert and update records in the `pull_requests` and `pipeline_runs` tables. These tables are considered the source of truth for PR metadata and status.
-2.  **Triggering:** For **every event** that the API service might care about (PRs, workflows, etc.), you **must** insert a corresponding record into the `raw_events` table with `processed = false`. This is the handshake that triggers our AI enrichment and WebSocket broadcast.
+### For Ingestion Service Developers
 
-### For the Frontend (Flutter) Developer
-Your interaction with this service follows a simple two-step pattern:
-1.  **Initial Load:** On application startup, make a single `GET` request to `/api/prs` to populate your dashboard with the current state of all pull requests.
-2.  **Live Updates:** Immediately after the initial load, establish a persistent connection to the `/ws` endpoint. Listen for `pr_update` messages. When a message arrives, find the corresponding pull request in your local state by its `pr_number` and replace it entirely with the new object from the `data` payload. The WebSocket message provides the complete, fresh state, so no merging is required.
+**Critical Requirements:**
+
+1. **Repository Management:** Check/create repositories before PR processing
+2. **Foreign Key Linking:** All records must reference correct `repo_id`
+3. **Files Changed Data:** Include complete `files_changed` JSON for AI processing
+4. **No Raw Events:** Direct table writes trigger automatic processing
+
+### For Frontend Developers
+
+**Updated Integration Pattern:**
+
+1. **Repository Selection:** Query `/api/repositories` for multi-repo support
+2. **Filtered Queries:** Use `repository_id` parameter for focused views
+3. **Enhanced Data:** Access complete file change information and insights
+4. **WebSocket Handling:** Process aggregated state updates with repository context
 
 ---
 
-## 6. Interactive API Documentation
+## 9. Production Deployment
 
-For live testing and detailed schema information, this FastAPI service provides auto-generated, interactive documentation:
+### Docker Support
 
-*   **Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
-*   **ReDoc:** [http://localhost:8000/redoc](http://localhost:8000/redoc)
+```bash
+# Build image
+docker build -t flowlens-api:v2.0 .
 
-These tools allow you to execute API calls directly from your browser and view detailed request/response models.
+# Run container
+docker run -p 8000:8000 --env-file .env flowlens-api:v2.0
+```
+
+### Health Monitoring
+
+- **Basic:** `GET /` - Service status and version
+- **Detailed:** `GET /health` - Database connectivity and configuration
+
+### Performance Features
+
+- Database connection pooling with configurable limits
+- Efficient SQL queries with proper indexing
+- WebSocket connection management with automatic cleanup
+- Graceful shutdown handling for zero-downtime deployments
+
+---
+
+## 10. API Documentation
+
+**Interactive Documentation:**
+
+- **Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ReDoc:** [http://localhost:8000/redoc](http://localhost:8000/redoc)
+
+**Key Features:**
+
+- Complete endpoint documentation with examples
+- Repository filtering parameter explanations
+- WebSocket message format specifications
+- Error response handling guidelines
+
+---
+
+## 11. Changelog v1.0 → v2.0
+
+### Major Changes
+
+- ✅ **Repository-centric architecture** - Multi-repo support
+- ✅ **Polling-based processing** - Reliable 2-second polling with `processed` flags
+- ✅ **Enhanced AI insights** - Actual file change analysis with Gemini
+- ✅ **Flexible API design** - Optional repository filtering
+- ✅ **Improved WebSocket system** - Aggregated state broadcasting
+- ❌ **Removed raw_events table** - Direct database polling approach
+- ❌ **Removed database triggers** - Simplified to polling for reliability
+
+### ⚠️ Critical Integration Requirement
+
+**For the ingestion service:** When updating ANY existing record in `pull_requests`, `pipeline_runs`, or `insights`, you **MUST** set `processed = FALSE` so the API service picks up the changes.
+
+```sql
+-- Example: When updating PR status
+UPDATE pull_requests
+SET state = 'merged', processed = FALSE, updated_at = now()
+WHERE repo_id = $1 AND pr_number = $2;
+```
+
+**See `INTEGRATION_GUIDE.md` for complete details.**
+
+### Backward Compatibility
+
+- Legacy `/api/prs` and `/api/repository` endpoints maintained
+- WebSocket message format enhanced but compatible
+- Environment configuration simplified (removed trigger-related settings)
+
+---
+
+This v2.0 architecture provides a robust, scalable foundation for multi-repository DevOps workflow visualization with real-time AI insights and comprehensive API flexibility.

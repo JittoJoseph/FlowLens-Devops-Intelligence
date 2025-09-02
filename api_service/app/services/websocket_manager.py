@@ -1,44 +1,77 @@
 # api_service/app/services/websocket_manager.py
 
-import asyncio
-from typing import List, Any
+import json
+from typing import List
 from fastapi import WebSocket
 from loguru import logger
+from app.data.database import db_helpers
+
 
 class WebSocketManager:
-    """Manages active WebSocket connections and broadcasts messages."""
     def __init__(self):
         self.active_connections: List[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
-        """Accepts and stores a new WebSocket connection."""
         await websocket.accept()
         self.active_connections.append(websocket)
-        logger.info(f"New WebSocket connection: {websocket.client}")
+        logger.info(f"New WebSocket connection. Total connections: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
-        """Removes a WebSocket connection."""
-        self.active_connections.remove(websocket)
-        logger.info(f"WebSocket connection closed: {websocket.client}")
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        logger.info(f"WebSocket disconnected. Total connections: {len(self.active_connections)}")
 
-    async def broadcast_json(self, data: Any):
-        """Sends a JSON payload to all connected clients."""
+    async def broadcast_json(self, data: dict):
+        """Broadcast JSON data to all connected clients."""
         if not self.active_connections:
             return
-
-        logger.info(f"Broadcasting message to {len(self.active_connections)} clients.")
         
-        # Use asyncio.gather for concurrent sending
-        results = await asyncio.gather(
-            *[conn.send_json(data) for conn in self.active_connections],
-            return_exceptions=True
-        )
+        message = json.dumps(data)
+        disconnected = []
+        
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(message)
+            except Exception as e:
+                logger.warning(f"Failed to send message to client: {e}")
+                disconnected.append(connection)
+        
+        # Remove disconnected clients
+        for connection in disconnected:
+            self.disconnect(connection)
+        
+        if disconnected:
+            logger.info(f"Cleaned up {len(disconnected)} disconnected clients")
 
-        # Handle clients that may have disconnected unexpectedly
-        for result, conn in zip(results, self.active_connections):
-            if isinstance(result, Exception):
-                logger.warning(f"Failed to send to client {conn.client}: {result}")
+    async def broadcast_pr_state_update(self, repo_id: str, pr_number: int):
+        """
+        Broadcast only PR state updates with minimal data for Flutter real-time updates.
+        Sends only: repo_id, pr_number, and current state.
+        """
+        try:
+            # Get current PR state
+            pr_data = await db_helpers.select_one(
+                "pull_requests",
+                where={"repo_id": repo_id, "pr_number": pr_number},
+                select=["state", "merged", "is_draft"]
+            )
+            
+            if not pr_data:
+                logger.warning(f"PR #{pr_number} not found in repository {repo_id}")
+                return
+            
+            # Simple state message with only essential data
+            state_message = {
+                "repo_id": repo_id,
+                "pr_number": pr_number,
+                "state": pr_data["state"]
+            }
+            
+            await self.broadcast_json(state_message)
+            logger.success(f"Broadcasted state update for PR #{pr_number} in {repo_id}: {pr_data['state']}")
+            
+        except Exception as e:
+            logger.error(f"Failed to broadcast PR state update for #{pr_number} in {repo_id}: {e}")
 
 
-# Create a single instance to be used throughout the application
 websocket_manager = WebSocketManager()
