@@ -1,57 +1,35 @@
-# FlowLens API Service v2.0
+# FlowLens API Service: The AI & Governance Engine
 
-The FlowLens API Service is the central intelligence layer for the FlowLens platform. Written in Python using FastAPI, it polls the database for changes, generates AI-powered insights, and serves data to clients through REST APIs and WebSockets.
+The FlowLens API Service is the central intelligence and decision-making core of the FlowLens platform. This microservice transforms raw DevOps data into actionable insights, serving as the "brain" that powers our **Intelligent Transactional System**. It embodies the principles of `AI/ML-driven decision-making` and `Technical Innovation`.
 
 ## Key Features
 
-- **Repository-Centric Architecture**: Full support for managing and filtering data across multiple repositories.
-- **Polling-Based Processing**: A reliable 2-second database poller processes new events flagged for processing.
-- **Enhanced AI Insights**: Advanced analysis of file changes and diffs using Google Gemini.
-- **Flexible APIs**: Modern RESTful endpoints with repository filtering capabilities.
-- **Real-Time Broadcasting**: Pushes live state updates to all connected clients via WebSockets.
+- **Context-Aware AI Analysis**: Moves beyond simple metrics by analyzing actual code diffs with Google Gemini to generate nuanced risk assessments and recommendations.
+- **Resilient Event Processing**: Employs a robust database polling mechanism that guarantees every event is processed, ensuring fault-tolerance even if the service restarts.
+- **Real-Time Broadcasting**: Pushes live state updates via WebSockets, providing the real-time feedback loop essential for modern DevOps and observability.
+- **Scalable, Repository-Centric Design**: Architected to manage and serve data for hundreds of repositories simultaneously, ensuring enterprise readiness.
 
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.11+
-- Access to a YugabyteDB instance with the FlowLens schema applied.
+- Access to the FlowLens YugabyteDB instance.
 - A Google Gemini API key.
 
 ### Setup & Run
 
-1.  **Clone the repository and navigate to the service:**
-    ```bash
-    git clone <repository_url>
-    cd api_service
-    ```
-2.  **Create and activate a virtual environment:**
-    ```bash
-    python -m venv __venv__
-    source __venv__/bin/activate
-    ```
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-4.  **Configure environment:**
-    - Copy `.env.example` to `.env`.
-    - Edit `.env` with your `DATABASE_URL` and `GEMINI_API_KEY`.
-    - Ensure `EVENT_PROCESSING_MODE` is set to `POLL`.
+1.  **Clone and navigate to the service:** `git clone <repo> && cd api_service`
+2.  **Create and activate a virtual environment:** `python -m venv venv && source venv/bin/activate`
+3.  **Install dependencies:** `pip install -r requirements.txt`
+4.  **Configure environment:** Copy `.env.example` to `.env` and fill in your `DATABASE_URL` and `GEMINI_API_KEY`.
+5.  **Run the service:** `uvicorn app.main:app --reload`
 
-5.  **Run the service:**
-    ```bash
-    # For development with auto-reload
-    uvicorn app.main:app --reload
-
-    # For production
-    python server_runner.py
-    ```
-The service will be available at `http://localhost:8000`.
+The service and its interactive API docs will be available at `http://localhost:8000`.
 
 ## Documentation
 
-- **[API Endpoints](./docs/api_endpoints.md)**: Detailed descriptions of all REST endpoints.
-- **[WebSocket Guide](./docs/websockets.md)**: Information on the real-time WebSocket protocol.
-- **[AI Insights System](./docs/ai_insights.md)**: How the AI processing flow works.
-- **[Integration Guide](./docs/integration_guide.md)**: Guidelines for developers interacting with this service.
+- **[API Endpoints](./docs/api_endpoints.md)**: A complete reference for our RESTful API.
+- **[WebSocket Guide](./docs/websockets.md)**: Details on the real-time communication protocol.
+- **[AI Insights System](./docs/ai_insights.md)**: An overview of the AI-powered governance logic.
+- **[Integration Guide](./docs/integration_guide.md)**: Guidelines for service-to-service interaction.
