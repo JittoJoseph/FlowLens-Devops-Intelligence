@@ -5,10 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "start:discord": "node index-discord.js",
     "dev": "nodemon index.js",
-    "dev:discord": "nodemon index-discord.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node test_webhook.js",
+    "export": "node scripts/export_tables.js",
     "docker:build": "docker build -t flowlens-ingestion .",
     "docker:run": "docker run -p 3000:3000 --env-file .env flowlens-ingestion"
   },
@@ -29,6 +28,7 @@
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "form-data": "^4.0.0",
+    "node-fetch": "^3.3.2",
     "pg": "^8.16.3"
   },
   "devDependencies": {
