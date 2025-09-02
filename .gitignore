@@ -10,3 +10,4 @@ root.*
 *.env.*
 __pycache__/
 /ingestion_service/exports
+/prd.md

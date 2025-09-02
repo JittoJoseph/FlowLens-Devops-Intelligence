@@ -18,28 +18,28 @@ background_tasks = []
 async def lifespan(app: FastAPI):
     global background_tasks
     setup_logging()
-    logger.info("Starting up application...")
+    logger.info("Starting FlowLens API Service with repository-centric architecture...")
     await db_connect()
 
     # --- Start background services based on config ---
     if settings.EVENT_PROCESSING_MODE == "LISTEN":
-        logger.info("EVENT_PROCESSING_MODE is 'LISTEN'. Starting listener with fallback poller.")
-        # Fast path: Real-time listener
+        logger.info("EVENT_PROCESSING_MODE is 'LISTEN'. Starting trigger-based listener with fallback poller.")
+        # Primary: Real-time trigger-based listener for pr_event, pipeline_event, insight_event
         listener_task = asyncio.create_task(listen_for_db_notifications())
-        # Safety net: Slow poller to catch any missed events
+        # Safety net: Fallback poller to catch any missed events (runs less frequently)
         fallback_poller_task = asyncio.create_task(poll_for_events(is_fallback=True))
         background_tasks.extend([listener_task, fallback_poller_task])
     
     elif settings.EVENT_PROCESSING_MODE == "POLL":
-        logger.warning("EVENT_PROCESSING_MODE is 'POLL'. Running in polling-only mode.")
+        logger.warning("EVENT_PROCESSING_MODE is 'POLL'. Running in polling-only mode for trigger-based system.")
         # Primary poller for environments where LISTEN/NOTIFY is unreliable
         poller_task = asyncio.create_task(poll_for_events())
         background_tasks.append(poller_task)
 
-    logger.success("Application startup complete!")
+    logger.success("FlowLens API Service startup complete! Repository-centric architecture ready.")
     yield
     
-    logger.info("Shutting down application...")
+    logger.info("Shutting down FlowLens API Service...")
     
     # --- Signal all services to stop ---
     if settings.EVENT_PROCESSING_MODE == "LISTEN":
@@ -60,28 +60,63 @@ async def lifespan(app: FastAPI):
         pass
     
     await db_disconnect()
-    logger.success("Application shutdown complete!")
+    logger.success("FlowLens API Service shutdown complete!")
 
 
 app = FastAPI(
     lifespan=lifespan,
     title="FlowLens API Service",
-    version="1.0.0"
+    description="AI-Powered DevOps Workflow Visualizer - Repository-Centric API",
+    version="2.0.0"
 )
 
 app.include_router(api.router)
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time updates.
+    Receives notifications from database triggers and broadcasts aggregated state.
+    """
     await websocket_manager.connect(websocket)
     try:
         while True:
-            # We can set a timeout to periodically check connection state if needed
-            # For now, just waiting is fine.
+            # Keep the connection alive
+            # Client doesn't need to send messages, just receives updates
             await websocket.receive_text()
     except WebSocketDisconnect:
         websocket_manager.disconnect(websocket)
 
 @app.get("/")
 async def root():
-    return {"status": "online", "service": "flowlens-api-service"}
+    """Health check endpoint."""
+    return {
+        "status": "online", 
+        "service": "flowlens-api-service",
+        "version": "2.0.0",
+        "architecture": "repository-centric",
+        "processing_mode": settings.EVENT_PROCESSING_MODE
+    }
+
+@app.get("/health")
+async def health_check():
+    """Detailed health check with database connectivity."""
+    try:
+        from app.data.database.core_db import get_db
+        db = get_db()
+        # Simple connectivity test
+        await db.fetch_one("SELECT 1 as test")
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "processing_mode": settings.EVENT_PROCESSING_MODE,
+            "version": "2.0.0"
+        }
+    except Exception as e:
+        logger.error("Health check failed", exception=e)
+        return {
+            "status": "unhealthy",
+            "database": "disconnected",
+            "error": str(e),
+            "version": "2.0.0"
+        }

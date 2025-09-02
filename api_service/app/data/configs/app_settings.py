@@ -24,6 +24,7 @@ class AppSettings(BaseSettings):
 
     # Database Listener 
     DATABASE_URL_LISTENER: Optional[str] = None
+    # Updated: LISTEN mode is now the primary mode for the new trigger system
     EVENT_PROCESSING_MODE: Literal["LISTEN", "POLL"] = "LISTEN"
 
     # Services

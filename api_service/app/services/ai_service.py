@@ -34,26 +34,58 @@ def _clean_json_response(raw_response: str) -> str:
         return match.group(1).strip()
     return raw_response.strip()
 
+
+def _format_files_changed(files_changed: list) -> str:
+    """Formats the files_changed JSON data into a readable string for the AI prompt."""
+    if not files_changed:
+        return "No files changed"
+    
+    formatted_files = []
+    for file_data in files_changed:
+        filename = file_data.get('filename', 'unknown')
+        status = file_data.get('status', 'unknown')
+        additions = file_data.get('additions', 0)
+        deletions = file_data.get('deletions', 0)
+        changes = file_data.get('changes', 0)
+        
+        # Include patch data if available (truncated for brevity)
+        patch = file_data.get('patch', '')
+        if patch and len(patch) > 500:
+            patch = patch[:500] + "... [truncated]"
+        
+        file_summary = f"- {filename} ({status}): +{additions}/-{deletions} ({changes} changes)"
+        if patch:
+            file_summary += f"\n  Patch preview: {patch[:200]}..."
+        
+        formatted_files.append(file_summary)
+    
+    return "\n".join(formatted_files)
+
+
 async def get_ai_insights(pr_data: dict) -> dict | None:
     """
-    Generates AI insights for a PR using Gemini. Now resilient to API errors.
-    Expects `pr_data` to have keys like: title, author, branch_name, etc.
+    Generates AI insights for a PR using Gemini with enhanced files_changed analysis.
+    Expects `pr_data` to have keys like: title, author, branch_name, files_changed, etc.
     """
     if not MODEL_NAME or not PROMPT_TEMPLATE:
         logger.error("AI service is not configured. Cannot get insights.")
         return None
 
-    # The new `pull_requests` table doesn't have `files_changed`, so we remove it from the prompt for now.
-    # In a future version, you could fetch this via GitHub API if needed.
+    # Extract and format files_changed data from the new schema
+    files_changed = pr_data.get("files_changed", [])
+    formatted_files = _format_files_changed(files_changed)
+    
+    # Build enhanced prompt with actual file change data
     prompt = PROMPT_TEMPLATE.format(
         author=pr_data.get("author", "N/A"),
         branch_name=pr_data.get("branch_name", "N/A"),
         commit_message=pr_data.get("title", "N/A"),
-        files_changed="N/A" # Placeholder as this data is not in the `pull_requests` table.
+        files_changed=formatted_files
     )
 
     pr_number = pr_data.get('pr_number')
-    logger.info(f"Requesting AI insight for PR #{pr_number}")
+    repo_id = pr_data.get('repo_id')
+    logger.info(f"Requesting AI insight for PR #{pr_number} in repository {repo_id}")
 
     try:
         generation_config = types.GenerateContentConfig(
@@ -66,18 +98,27 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
             config=generation_config,
         )        
         
-        # --- FIX 1: DEFENSIVE CHECK for empty or invalid responses ---
+        # --- DEFENSIVE CHECK for empty or invalid responses ---
         if not response or not hasattr(response, 'text') or not response.text:
             logger.warning(f"Gemini returned an empty or invalid response object for PR #{pr_number}.")
             return None
         
         cleaned_response = _clean_json_response(response.text)
         
-        # --- FIX 2: ISOLATED JSON PARSING with robust error handling ---
+        # --- ISOLATED JSON PARSING with robust error handling ---
         try:
             insight_json = json.loads(cleaned_response)
+            
+            # Validate required fields and provide defaults
+            insight_json.setdefault('riskLevel', 'low')
+            insight_json.setdefault('confidenceScore', 0.7)
+            insight_json.setdefault('summary', 'AI analysis completed')
+            insight_json.setdefault('recommendation', 'Review changes carefully')
+            insight_json.setdefault('keyChanges', [])
+            
             logger.success(f"Successfully generated and parsed AI insight for PR #{pr_number}")
             return insight_json
+            
         except json.JSONDecodeError as e:
             logger.error(
                 f"Failed to decode JSON from Gemini response for PR #{pr_number}. The AI returned malformed JSON.",
