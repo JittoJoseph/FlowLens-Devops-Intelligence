@@ -558,6 +558,84 @@ if (process.env.NODE_ENV !== "production") {
         .json({ error: "Database reset failed", details: error.message });
     }
   });
+
+  // Clear all data from tables - DEVELOPMENT ONLY
+  app.post("/clear-data", async (req, res) => {
+    const { secret } = req.body;
+
+    if (!secret || secret !== WEBHOOK_SECRET) {
+      return res.status(401).json({ error: "Invalid secret" });
+    }
+
+    try {
+      console.log("🧹 Clearing all data from tables...");
+
+      // Clear data from all tables in the right order (handle foreign key dependencies)
+      const tables = [
+        "insights",
+        "pipeline_runs",
+        "pull_requests",
+        "repositories",
+      ];
+
+      let totalRowsDeleted = 0;
+      const deleteResults = {};
+
+      for (const table of tables) {
+        try {
+          // Get count before deletion
+          const countResult = await pool.query(`SELECT COUNT(*) FROM ${table}`);
+          const beforeCount = parseInt(countResult.rows[0].count);
+
+          // Delete all data from table
+          const deleteResult = await pool.query(`DELETE FROM ${table}`);
+          const deletedRows = deleteResult.rowCount;
+
+          deleteResults[table] = {
+            before: beforeCount,
+            deleted: deletedRows,
+          };
+
+          totalRowsDeleted += deletedRows;
+          console.log(`🗑️  Cleared ${deletedRows} rows from ${table}`);
+        } catch (tableError) {
+          console.error(
+            `❌ Error clearing table ${table}:`,
+            tableError.message
+          );
+          deleteResults[table] = {
+            error: tableError.message,
+          };
+        }
+      }
+
+      // Reset all sequences (for auto-incrementing IDs if any)
+      try {
+        await pool.query(
+          "SELECT setval(pg_get_serial_sequence(table_name, column_name), 1, false) FROM information_schema.columns WHERE column_default LIKE 'nextval%'"
+        );
+        console.log("🔄 Reset auto-increment sequences");
+      } catch (seqError) {
+        console.warn("⚠️  Could not reset sequences:", seqError.message);
+      }
+
+      res.json({
+        success: true,
+        message: `Data cleared successfully - ${totalRowsDeleted} total rows deleted`,
+        details: deleteResults,
+        totalRowsDeleted: totalRowsDeleted,
+      });
+
+      console.log(
+        `✅ Data clearing complete - ${totalRowsDeleted} total rows deleted`
+      );
+    } catch (error) {
+      console.error("❌ Data clearing failed:", error.message);
+      res
+        .status(500)
+        .json({ error: "Data clearing failed", details: error.message });
+    }
+  });
 }
 
 // Helper function to fetch changed files from GitHub API
