@@ -74,6 +74,15 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
 
     # Extract and format files_changed data from the new schema
     files_changed = pr_data.get("files_changed", [])
+    
+    # Handle case where files_changed might be a JSON string
+    if isinstance(files_changed, str):
+        try:
+            files_changed = json.loads(files_changed)
+        except json.JSONDecodeError:
+            logger.warning("Invalid JSON in files_changed data")
+            return None
+    
     if not files_changed:
         logger.warning("No files_changed data available for AI analysis")
         return None

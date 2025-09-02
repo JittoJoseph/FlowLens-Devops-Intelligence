@@ -53,7 +53,7 @@ class WebSocketManager:
             pr_data = await db_helpers.select_one(
                 "pull_requests",
                 where={"repo_id": repo_id, "pr_number": pr_number},
-                select=["state", "merged", "is_draft"]
+                select_fields="state, merged, is_draft"
             )
             
             if not pr_data:
