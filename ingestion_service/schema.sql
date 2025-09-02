@@ -50,12 +50,14 @@ CREATE TABLE insights (
     risk_level TEXT CHECK (risk_level IN ('low', 'medium', 'high')),
     summary TEXT,                      -- One-line description from Gemini
     recommendation TEXT,               -- Suggested action from Gemini
+    processed BOOLEAN DEFAULT FALSE,   -- Flag for polling system
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
 -- Index for PR lookups
 CREATE INDEX idx_insights_repo_pr ON insights (repo_id, pr_number, created_at DESC);
 CREATE INDEX idx_insights_pr ON insights (pr_number, created_at DESC);
+CREATE INDEX idx_insights_processed ON insights (processed, created_at DESC) WHERE processed = FALSE;
 
 -- ================================
 -- Table 3: PR Pipeline Status (Updated with repo_id)
@@ -75,6 +77,7 @@ CREATE TABLE pipeline_runs (
     status_approval TEXT DEFAULT 'pending', -- Approval stage
     status_merge TEXT DEFAULT 'pending',    -- Merged stage
     history JSONB DEFAULT '[]'::jsonb,      -- Timeline of status changes (small audit trail)
+    processed BOOLEAN DEFAULT FALSE,        -- Flag for polling system
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now(),
     UNIQUE (repo_id, pr_number)             -- One pipeline per PR per repository
@@ -83,6 +86,7 @@ CREATE TABLE pipeline_runs (
 -- Index for status queries
 CREATE INDEX idx_pipeline_runs_status ON pipeline_runs (updated_at DESC);
 CREATE INDEX idx_pipeline_runs_repo_pr ON pipeline_runs (repo_id, pr_number);
+CREATE INDEX idx_pipeline_runs_processed ON pipeline_runs (processed, updated_at DESC) WHERE processed = FALSE;
 
 -- ================================
 -- Table 4: Pull Requests (Updated with repo_id)
@@ -118,6 +122,7 @@ CREATE TABLE pull_requests (
     merged_at TIMESTAMPTZ,                              -- When PR was merged
     closed_at TIMESTAMPTZ,                              -- When PR was closed
     history JSONB DEFAULT '[]'::jsonb,                   -- Timeline of PR-level changes (audit trail)
+    processed BOOLEAN DEFAULT FALSE,                     -- Flag for polling system
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now(),
     UNIQUE (repo_id, pr_number)                         -- One PR per number per repository
@@ -127,6 +132,7 @@ CREATE TABLE pull_requests (
 CREATE INDEX idx_pr_updated ON pull_requests (updated_at DESC);
 CREATE INDEX idx_pr_repo_state ON pull_requests (repo_id, state);
 CREATE INDEX idx_pr_author ON pull_requests (author);
+CREATE INDEX idx_pr_processed ON pull_requests (processed, updated_at DESC) WHERE processed = FALSE;
 
 -- ================================
 -- Comments for Clarity
@@ -137,37 +143,6 @@ COMMENT ON TABLE insights IS 'AI-generated insights from Gemini API for each PR'
 COMMENT ON TABLE pipeline_runs IS 'Tracks PR workflow status: Created → Build → Approval → Merged';
 COMMENT ON TABLE pull_requests IS 'Essential PR data for Flutter app with repository relationship';
 
--- ================================
--- Triggers for Repository Statistics
--- ================================
-
--- Function to update repository statistics
-CREATE OR REPLACE FUNCTION update_repository_stats()
-RETURNS TRIGGER AS $$
-BEGIN
-    -- Update open_prs and total_prs counts
-    UPDATE repositories 
-    SET 
-        open_prs = (
-            SELECT COUNT(*) 
-            FROM pull_requests 
-            WHERE repo_id = COALESCE(NEW.repo_id, OLD.repo_id) 
-            AND state = 'open'
-        ),
-        total_prs = (
-            SELECT COUNT(*) 
-            FROM pull_requests 
-            WHERE repo_id = COALESCE(NEW.repo_id, OLD.repo_id)
-        ),
-        updated_at = now()
-    WHERE id = COALESCE(NEW.repo_id, OLD.repo_id);
-    
-    RETURN COALESCE(NEW, OLD);
-END;
-$$ LANGUAGE plpgsql;
-
--- Trigger to automatically update repository stats when PRs change
-CREATE OR REPLACE TRIGGER trigger_update_repo_stats
-    AFTER INSERT OR UPDATE OR DELETE ON pull_requests
-    FOR EACH ROW
-    EXECUTE FUNCTION update_repository_stats();
+COMMENT ON COLUMN insights.processed IS 'Flag to track if this insight has been processed by the API service polling system';
+COMMENT ON COLUMN pipeline_runs.processed IS 'Flag to track if this pipeline run has been processed by the API service polling system';
+COMMENT ON COLUMN pull_requests.processed IS 'Flag to track if this PR has been processed by the API service polling system';
