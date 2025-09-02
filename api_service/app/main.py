@@ -2,6 +2,7 @@
 
 import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from loguru import logger
 from app.routes import api
@@ -53,6 +54,15 @@ app = FastAPI(
     title="FlowLens API Service",
     description="AI-Powered DevOps Workflow Visualizer - Repository-Centric API",
     version="2.0.0"
+)
+
+# Add CORS middleware to allow browser WebSocket connections
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify exact origins
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 app.include_router(api.router)

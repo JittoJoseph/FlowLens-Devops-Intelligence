@@ -28,11 +28,35 @@ except FileNotFoundError:
     logger.error("FATAL: Prompt file 'app/data/prompts/get_insight.txt' not found!")
 
 def _clean_json_response(raw_response: str) -> str:
-    """Extracts JSON from markdown code blocks if present."""
-    match = re.search(r'```json\s*([\s\S]*?)\s*```', raw_response)
-    if match:
-        return match.group(1).strip()
-    return raw_response.strip()
+    """Extracts JSON from markdown code blocks and cleans the response."""
+    # Remove markdown code blocks
+    response = raw_response.strip()
+    
+    # Try to extract from ```json blocks first
+    json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
+    if json_match:
+        response = json_match.group(1).strip()
+    else:
+        # Try to extract from ``` blocks without json label
+        code_match = re.search(r'```\s*([\s\S]*?)\s*```', response)
+        if code_match:
+            response = code_match.group(1).strip()
+    
+    # Find JSON object by looking for { ... } pattern
+    json_pattern = re.search(r'\{[\s\S]*\}', response)
+    if json_pattern:
+        response = json_pattern.group(0)
+    
+    # Clean up any remaining markdown or extra text
+    response = response.strip()
+    
+    # If response doesn't start with {, try to find the first {
+    if not response.startswith('{'):
+        start_index = response.find('{')
+        if start_index != -1:
+            response = response[start_index:]
+    
+    return response
 
 
 def _format_files_changed(files_changed: list) -> str:
@@ -112,12 +136,31 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
             config=generation_config,
         )        
         
-        # Check for empty or invalid responses
-        if not response or not hasattr(response, 'text') or not response.text:
+        logger.info(f"Raw Gemini response structure: {type(response)}")
+        
+        # Extract the text from the response using the correct structure
+        raw_response = None
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts') and candidate.content.parts:
+                raw_response = candidate.content.parts[0].text
+                logger.info(f"Extracted text from response: {raw_response[:200]}...")
+            else:
+                logger.warning(f"Gemini response missing content/parts structure for PR #{pr_number}.")
+                return None
+        elif hasattr(response, 'text') and response.text:
+            # Fallback for older API structure
+            raw_response = response.text
+            logger.info(f"Using fallback response.text: {raw_response[:200]}...")
+        else:
             logger.warning(f"Gemini returned an empty or invalid response for PR #{pr_number}.")
             return None
         
-        cleaned_response = _clean_json_response(response.text)
+        if not raw_response:
+            logger.warning(f"No text content found in Gemini response for PR #{pr_number}.")
+            return None
+        
+        cleaned_response = _clean_json_response(raw_response)
         
         # Parse JSON response with robust error handling
         try:
@@ -138,13 +181,16 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
             return cleaned_insight
             
         except json.JSONDecodeError as e:
+            # Safe logging to avoid format string conflicts with JSON braces
+            response_preview = cleaned_response[:200] + "..." if len(cleaned_response) > 200 else cleaned_response
+            response_preview = response_preview.replace('{', '{{').replace('}', '}}')  # Escape braces for logging
+            
             logger.error(
-                f"Failed to decode JSON from Gemini response for PR #{pr_number}. Malformed JSON returned.",
-                response_text=cleaned_response[:200] + "..." if len(cleaned_response) > 200 else cleaned_response,
-                exception=str(e)
+                f"Failed to decode JSON from Gemini response for PR #{pr_number}. "
+                f"Response preview: {response_preview} | Error: {str(e)}"
             )
             return None
 
     except Exception as e:
-        logger.error(f"Unexpected error with Gemini API for PR #{pr_number}", exception=e)
+        logger.error(f"Unexpected error with Gemini API for PR #{pr_data['pr_number']}: {str(e)}")
         return None

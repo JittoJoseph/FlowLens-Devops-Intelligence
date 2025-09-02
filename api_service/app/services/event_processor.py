@@ -167,6 +167,8 @@ async def _generate_ai_insight_for_pr(pr_record: dict):
         logger.info(f"Generating AI insights for PR #{pr_number} with {len(files_changed)} changed files")
         ai_insight_json = await ai_service.get_ai_insights(pr_record)
         
+        logger.info(f"AI service returned: {ai_insight_json}")
+        
         if ai_insight_json:
             # Store the insights in the database with processed=false initially
             insight_record = {
@@ -181,7 +183,9 @@ async def _generate_ai_insight_for_pr(pr_record: dict):
                 "processed": False  # Will be processed by the poller
             }
             
-            await db_helpers.insert("insights", insight_record)
+            logger.info(f"Attempting to insert insight record: {insight_record}")
+            result = await db_helpers.insert("insights", insight_record)
+            logger.info(f"Insert result: {result}")
             logger.success(f"Generated and saved AI insight for PR #{pr_number} in repository {repo_id}")
             return True
         else:
