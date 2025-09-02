@@ -36,11 +36,24 @@ async def _build_pr_history(repo_id: str, pr_number: int) -> list:
         )
         
         if not pr_records:
+            logger.warning(f"No PR record found for repo {repo_id}, PR #{pr_number}")
             return []
         
         pr_history = pr_records[0].get('history', [])
+        
+        # Handle case where history might be stored as JSON string
+        if isinstance(pr_history, str):
+            try:
+                pr_history = json.loads(pr_history)
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON in history field for PR #{pr_number}")
+                return []
+        
         if not isinstance(pr_history, list):
+            logger.warning(f"History field is not a list for PR #{pr_number}, type: {type(pr_history)}")
             return []
+        
+        logger.info(f"Found {len(pr_history)} history events for PR #{pr_number}")
         
         # Extract meaningful state changes from PR history
         history_events = []
@@ -60,7 +73,7 @@ async def _build_pr_history(repo_id: str, pr_number: int) -> list:
             # Only include workflow-related states, skip generic ones
             meaningful_states = {
                 'opened', 'building', 'buildPassed', 'buildFailed', 
-                'approved', 'rejected', 'merged', 'closed'
+                'approved', 'rejected', 'merged', 'closed', 'open'
             }
             
             if state in meaningful_states and state not in seen_states:
@@ -69,10 +82,12 @@ async def _build_pr_history(repo_id: str, pr_number: int) -> list:
                     "timestamp": timestamp
                 })
                 seen_states.add(state)
+                logger.debug(f"Added history event: {state} at {timestamp}")
         
         # Sort by timestamp to ensure chronological order
         history_events.sort(key=lambda x: x['timestamp'])
         
+        logger.info(f"Extracted {len(history_events)} meaningful events for PR #{pr_number}")
         return history_events
         
     except Exception as e:
@@ -412,6 +427,7 @@ async def get_insights_for_pr(pr_number: int, repository_id: Optional[str] = Que
     """
     Fetches all historical AI insights for a specific PR.
     Optionally filtered by repository for multi-repo scenarios.
+    Includes filenames in keyChanges field.
     """
     logger.info(f"Fetching insights for PR #{pr_number}{f' in repository {repository_id}' if repository_id else ''}...")
     try:
@@ -429,6 +445,35 @@ async def get_insights_for_pr(pr_number: int, repository_id: Optional[str] = Que
         # Format for backward compatibility with Flutter app
         response_data = []
         for insight in insights:
+            # Get PR details to extract filenames for keyChanges
+            key_changes = []
+            try:
+                pr_records = await db_helpers.select(
+                    table="pull_requests",
+                    where={"repo_id": insight['repo_id'], "pr_number": insight['pr_number']},
+                    limit=1
+                )
+                
+                if pr_records:
+                    pr_details = pr_records[0]
+                    files_changed = pr_details.get('files_changed', [])
+                    
+                    # Handle JSON string format
+                    if isinstance(files_changed, str):
+                        try:
+                            files_changed = json.loads(files_changed)
+                        except json.JSONDecodeError:
+                            files_changed = []
+                    
+                    # Extract filenames
+                    if isinstance(files_changed, list):
+                        for file_change in files_changed:
+                            if isinstance(file_change, dict) and 'filename' in file_change:
+                                key_changes.append(file_change['filename'])
+                                
+            except Exception as pr_error:
+                logger.warning(f"Could not fetch PR details for insight {insight['id']}: {pr_error}")
+            
             response_data.append({
                 "id": insight['id'],
                 "prNumber": insight['pr_number'],
@@ -440,8 +485,8 @@ async def get_insights_for_pr(pr_number: int, repository_id: Optional[str] = Que
                 "summary": insight['summary'],
                 "recommendation": insight['recommendation'],
                 "createdAt": insight['created_at'].isoformat(),
-                # Legacy fields for Flutter compatibility
-                "keyChanges": [],
+                # Populated with actual filenames from files_changed
+                "keyChanges": key_changes,
                 "confidenceScore": 0
             })
         
