@@ -10,7 +10,7 @@ The FlowLens API Service is the central data hub and intelligence layer for the 
 
 This service acts as the "brain" of the operation, transforming raw event data into actionable intelligence and ensuring the frontend is always up-to-date.
 
-<!--(DOCS still needs to updated as there's new event listening setup from DB)-->
+<!--(DOCS still needs to updated as there's new event listening setup from DB)--> 
 ---
 
 ## 2. Architecture & Data Flow
