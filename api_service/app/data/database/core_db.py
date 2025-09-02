@@ -7,7 +7,6 @@ from databases import Database
 from app.data.configs.app_settings import settings
 
 database: Optional[Database] = None
-listener_db: Optional[Database] = None
 
 
 def _create_ssl_context():
@@ -32,21 +31,6 @@ def get_db() -> Database:
     return database
 
 
-def get_listener_db() -> Database:
-    global listener_db
-    if listener_db is None:
-        ssl_context = _create_ssl_context()
-        listener_db = Database(
-            settings.LISTENER_DATABASE_URL,
-            min_size=1,
-            max_size=1,
-            ssl=ssl_context,
-            force_rollback=True,
-            server_settings={'application_name': 'flowlens-api-listener'}
-        )
-    return listener_db
-
-
 async def connect():
     db = get_db()
     if not db.is_connected:
@@ -58,16 +42,6 @@ async def connect():
             logger.critical(f"Could not connect main database pool: {str(e)}")
             raise
 
-    ldb = get_listener_db()
-    if not ldb.is_connected:
-        logger.info("Connecting dedicated DB listener...")
-        try:
-            await ldb.connect()
-            logger.success("Dedicated DB listener connected.")
-        except Exception as e:
-            logger.critical(f"Could not connect dedicated DB listener: {str(e)}")
-            raise
-
 
 async def disconnect():
     db = get_db()
@@ -75,9 +49,3 @@ async def disconnect():
         logger.info("Closing main database pool...")
         await db.disconnect()
         logger.success("Main database pool closed.")
-    
-    ldb = get_listener_db()
-    if ldb.is_connected:
-        logger.info("Closing dedicated DB listener connection...")
-        await ldb.disconnect()
-        logger.success("Dedicated DB listener connection closed.")
