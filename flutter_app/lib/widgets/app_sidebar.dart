@@ -85,17 +85,32 @@ class AppSidebar extends StatelessWidget {
                           Icons.dashboard_outlined,
                           'Dashboard',
                           'Overview & insights',
-                          true,
-                          () => Navigator.pop(context),
+                          _isDashboardActive(context),
+                          () {
+                            Navigator.pop(context);
+                            if (!_isDashboardActive(context)) {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/dashboard',
+                              );
+                            }
+                          },
                         ),
                         _buildMenuItem(
                           Icons.account_tree_outlined,
                           'Repositories',
                           'Manage repos',
-                          false,
+                          ModalRoute.of(context)?.settings.name ==
+                              '/repositories',
                           () {
                             Navigator.pop(context);
-                            // TODO: Navigate to repositories
+                            if (ModalRoute.of(context)?.settings.name !=
+                                '/repositories') {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/repositories',
+                              );
+                            }
                           },
                         ),
                         _buildMenuItem(
@@ -207,7 +222,7 @@ class AppSidebar extends StatelessWidget {
                       false,
                       () {
                         Navigator.pop(context);
-                        // TODO: Navigate to GitHub connect
+                        Navigator.pushReplacementNamed(context, '/connect');
                       },
                     );
                   }
@@ -312,5 +327,32 @@ class AppSidebar extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  // Helper method to check if we're currently on a dashboard screen
+  bool _isDashboardActive(BuildContext context) {
+    final routeName = ModalRoute.of(context)?.settings.name;
+    
+    // Check for named dashboard route
+    if (routeName == '/dashboard') {
+      return true;
+    }
+    
+    // Check if the current widget tree contains a DashboardScreen
+    // This handles cases where we navigate via MaterialPageRoute
+    try {
+      final currentRoute = ModalRoute.of(context);
+      if (currentRoute?.settings.arguments != null) {
+        final args = currentRoute!.settings.arguments as Map<String, dynamic>?;
+        // If route has repositoryId argument, it's likely a dashboard
+        if (args?.containsKey('repositoryId') == true) {
+          return true;
+        }
+      }
+    } catch (e) {
+      // If we can't determine from arguments, fall back to route name check
+    }
+    
+    return false;
   }
 }
