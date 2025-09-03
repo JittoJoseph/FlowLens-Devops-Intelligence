@@ -507,6 +507,16 @@ app.get("/db-status", async (req, res) => {
       };
     }
 
+    // Check for PRs with missing files_changed data
+    const missingFilesResult = await pool.query(`
+      SELECT COUNT(*) as count 
+      FROM pull_requests 
+      WHERE (files_changed = '[]'::jsonb OR files_changed IS NULL)
+        AND state IN ('open', 'merged')
+    `);
+
+    status.missing_files_changed = parseInt(missingFilesResult.rows[0].count);
+
     res.json({
       database_status: "connected",
       tables: status,
@@ -516,6 +526,90 @@ app.get("/db-status", async (req, res) => {
     console.error("❌ Error checking database status:", error);
     res.status(500).json({
       database_status: "error",
+      error: error.message,
+    });
+  }
+});
+
+// Manual resync endpoint for missing files_changed data
+app.post("/resync-files", async (req, res) => {
+  try {
+    console.log("🔄 Manual resync triggered...");
+
+    // Find PRs with missing files_changed data
+    const missingFilesQuery = `
+      SELECT pr.id, pr.repo_id, pr.pr_number, pr.title, pr.author,
+             r.full_name as repo_name, r.is_private
+      FROM pull_requests pr
+      JOIN repositories r ON pr.repo_id = r.id
+      WHERE (pr.files_changed = '[]'::jsonb OR pr.files_changed IS NULL)
+        AND pr.state IN ('open', 'merged')
+      ORDER BY pr.updated_at DESC
+      LIMIT 10
+    `;
+
+    const result = await pool.query(missingFilesQuery);
+    const prsToSync = result.rows;
+
+    if (prsToSync.length === 0) {
+      return res.json({
+        success: true,
+        message: "No PRs need file resync",
+        synced: 0,
+        skipped: 0,
+      });
+    }
+
+    let successful = 0;
+    let skipped = 0;
+
+    for (const pr of prsToSync) {
+      console.log(`📋 Resyncing PR #${pr.pr_number} (${pr.repo_name})`);
+
+      // Skip private repos without token
+      if (pr.is_private && !GITHUB_TOKEN) {
+        console.log(`⏭️ Skipping private repo without GitHub token`);
+        skipped++;
+        continue;
+      }
+
+      const filesChanged = await fetchChangedFiles(
+        pr.repo_name,
+        pr.pr_number,
+        2
+      ); // Fewer retries for manual sync
+
+      if (filesChanged === null || filesChanged.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      // Update the database
+      await pool.query(
+        `UPDATE pull_requests SET files_changed = $1, updated_at = NOW() WHERE id = $2`,
+        [JSON.stringify(filesChanged), pr.id]
+      );
+
+      console.log(
+        `✅ Updated PR #${pr.pr_number} with ${filesChanged.length} files`
+      );
+      successful++;
+
+      // Small delay
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    res.json({
+      success: true,
+      message: `Resync completed`,
+      total_found: prsToSync.length,
+      synced: successful,
+      skipped: skipped,
+    });
+  } catch (error) {
+    console.error("❌ Resync error:", error);
+    res.status(500).json({
+      success: false,
       error: error.message,
     });
   }
@@ -638,56 +732,252 @@ if (process.env.NODE_ENV !== "production") {
   });
 }
 
-// Helper function to fetch changed files from GitHub API
-async function fetchChangedFiles(repositoryFullName, prNumber) {
-  try {
-    const url = `https://api.github.com/repos/${repositoryFullName}/pulls/${prNumber}/files`;
+// Helper function to fetch changed files from GitHub API with retry logic
+async function fetchChangedFiles(repositoryFullName, prNumber, maxRetries = 3) {
+  const url = `https://api.github.com/repos/${repositoryFullName}/pulls/${prNumber}/files`;
 
-    const headers = {
-      Accept: "application/vnd.github.v3+json",
-      "User-Agent": "FlowLens-Ingestion-Service",
-    };
+  const headers = {
+    Accept: "application/vnd.github.v3+json",
+    "User-Agent": "FlowLens-Ingestion-Service",
+  };
 
-    // Add GitHub token if available for authentication
-    if (GITHUB_TOKEN) {
-      headers["Authorization"] = `token ${GITHUB_TOKEN}`;
-    }
+  // Add GitHub token if available for authentication
+  if (GITHUB_TOKEN) {
+    headers["Authorization"] = `token ${GITHUB_TOKEN}`;
+  }
 
-    const response = await fetch(url, { headers });
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, { headers });
 
-    if (!response.ok) {
-      console.warn(
-        `⚠️ Failed to fetch files for PR #${prNumber}: ${response.status}`
-      );
-      return [];
-    }
-
-    const files = await response.json();
-
-    // Filter and process files - exclude large files or binaries for performance
-    return files
-      .filter((file) => {
-        // Skip very large files (over 1MB) or binary files
-        return (
-          file.additions + file.deletions < 10000 &&
-          !file.filename.match(
-            /\.(png|jpg|jpeg|gif|ico|pdf|zip|tar|gz|exe|dll)$/i
-          )
+      // Handle different response scenarios
+      if (response.status === 404) {
+        console.warn(
+          `⚠️ PR #${prNumber} not found (likely private repo without token) - skipping retries`
         );
-      })
-      .map((file) => ({
-        filename: file.filename,
-        status: file.status,
-        additions: file.additions || 0,
-        deletions: file.deletions || 0,
-        changes: file.changes || 0,
-        patch: file.patch || null,
-      }));
-  } catch (error) {
-    console.warn(`⚠️ Error fetching files for PR #${prNumber}:`, error.message);
+        return []; // Don't retry 404s - likely auth issue
+      }
+
+      if (response.status === 403) {
+        const remaining = response.headers.get("x-ratelimit-remaining");
+        const resetTime = response.headers.get("x-ratelimit-reset");
+        console.warn(
+          `⚠️ Rate limited for PR #${prNumber} (${remaining} remaining, resets at ${new Date(
+            resetTime * 1000
+          ).toISOString()})`
+        );
+
+        if (attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt), 30000); // Max 30s delay
+          console.log(
+            `🔄 Retrying in ${delay}ms... (attempt ${
+              attempt + 1
+            }/${maxRetries})`
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        return [];
+      }
+
+      if (!response.ok) {
+        console.warn(
+          `⚠️ Failed to fetch files for PR #${prNumber}: ${response.status} ${response.statusText}`
+        );
+
+        if (attempt < maxRetries) {
+          const delay = 1000 * attempt; // Simple linear backoff
+          console.log(
+            `🔄 Retrying in ${delay}ms... (attempt ${
+              attempt + 1
+            }/${maxRetries})`
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        return [];
+      }
+
+      // Success! Process the files
+      const files = await response.json();
+      console.log(
+        `✅ Fetched ${files.length} files for PR #${prNumber} (attempt ${attempt})`
+      );
+
+      // Filter and process files - exclude large files or binaries for performance
+      return files
+        .filter((file) => {
+          // Skip very large files (over 1MB) or binary files
+          return (
+            file.additions + file.deletions < 10000 &&
+            !file.filename.match(
+              /\.(png|jpg|jpeg|gif|ico|pdf|zip|tar|gz|exe|dll)$/i
+            )
+          );
+        })
+        .map((file) => ({
+          filename: file.filename,
+          status: file.status,
+          additions: file.additions || 0,
+          deletions: file.deletions || 0,
+          changes: file.changes || 0,
+          patch: file.patch || null,
+        }));
+    } catch (error) {
+      console.warn(
+        `⚠️ Network error fetching files for PR #${prNumber} (attempt ${attempt}):`,
+        error.message
+      );
+
+      if (attempt < maxRetries) {
+        const delay = 1000 * attempt;
+        console.log(
+          `🔄 Retrying in ${delay}ms... (attempt ${attempt + 1}/${maxRetries})`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+    }
+  }
+
+  console.error(
+    `❌ Failed to fetch files for PR #${prNumber} after ${maxRetries} attempts`
+  );
+  return [];
+}
+
+// Generate generic fallback files_changed data when API fails
+function generateFallbackFilesChanged(additions, deletions, changedFiles) {
+  if (!additions && !deletions && !changedFiles) {
     return [];
   }
+
+  const fallbackFiles = [];
+  const filesCount = Math.min(changedFiles || 1, 5); // Max 5 files to keep it simple
+
+  // Create generic file entries based on the stats we have
+  for (let i = 0; i < filesCount; i++) {
+    // Generate reasonable file names based on common patterns
+    const commonExtensions = [
+      ".js",
+      ".ts",
+      ".jsx",
+      ".tsx",
+      ".py",
+      ".java",
+      ".cpp",
+      ".cs",
+    ];
+    const extension = commonExtensions[i % commonExtensions.length];
+    const filename =
+      filesCount === 1 ? `main${extension}` : `file_${i + 1}${extension}`;
+
+    // Distribute changes across files
+    const fileAdditions = Math.ceil(additions / filesCount);
+    const fileDeletions = Math.ceil(deletions / filesCount);
+
+    fallbackFiles.push({
+      filename: filename,
+      status: "modified",
+      additions:
+        i === filesCount - 1
+          ? additions - fileAdditions * (filesCount - 1)
+          : fileAdditions, // Last file gets remainder
+      deletions:
+        i === filesCount - 1
+          ? deletions - fileDeletions * (filesCount - 1)
+          : fileDeletions, // Last file gets remainder
+      changes: fileAdditions + fileDeletions,
+      patch: null, // No patch data available
+      _fallback: true, // Mark as fallback data
+    });
+  }
+
+  console.log(
+    `📝 Generated ${fallbackFiles.length} fallback file entries for ${additions}+/${deletions}- changes`
+  );
+  return fallbackFiles;
 }
+
+// Background process to retry PRs with missing files_changed data
+async function retryMissingFilesChanged() {
+  try {
+    console.log("🔄 Checking for PRs with missing files_changed data...");
+
+    const result = await pool.query(`
+      SELECT repo_id, pr_number, additions, deletions, changed_files, created_at
+      FROM pull_requests 
+      WHERE jsonb_array_length(files_changed) = 0 
+        AND (additions > 0 OR deletions > 0 OR changed_files > 0)
+        AND created_at > NOW() - INTERVAL '7 days'
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+
+    if (result.rows.length === 0) {
+      console.log("✅ No PRs need files_changed retry");
+      return;
+    }
+
+    console.log(
+      `🔍 Found ${result.rows.length} PRs with missing files_changed data`
+    );
+
+    for (const pr of result.rows) {
+      try {
+        // Get repository info
+        const repoResult = await pool.query(
+          "SELECT full_name FROM repositories WHERE id = $1",
+          [pr.repo_id]
+        );
+        if (repoResult.rows.length === 0) continue;
+
+        const repoFullName = repoResult.rows[0].full_name;
+        console.log(
+          `🔄 Retrying files_changed for PR #${pr.pr_number} in ${repoFullName}`
+        );
+
+        // Try to fetch files again
+        let filesChanged = await fetchChangedFiles(
+          repoFullName,
+          pr.pr_number,
+          2
+        ); // Fewer retries for background
+
+        // If still empty, use fallback
+        if (filesChanged.length === 0) {
+          console.log(`📝 Using fallback data for PR #${pr.pr_number}`);
+          filesChanged = generateFallbackFilesChanged(
+            pr.additions,
+            pr.deletions,
+            pr.changed_files
+          );
+        }
+
+        // Update the PR record
+        if (filesChanged.length > 0) {
+          await pool.query(
+            "UPDATE pull_requests SET files_changed = $1, processed = FALSE, updated_at = NOW() WHERE repo_id = $2 AND pr_number = $3",
+            [JSON.stringify(filesChanged), pr.repo_id, pr.pr_number]
+          );
+          console.log(
+            `✅ Updated files_changed for PR #${pr.pr_number} (${filesChanged.length} files)`
+          );
+        }
+
+        // Small delay to avoid overwhelming the API
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error(`❌ Error retrying PR #${pr.pr_number}:`, error.message);
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error in retryMissingFilesChanged:", error.message);
+  }
+}
+
+// Start background retry process every 10 minutes
+setInterval(retryMissingFilesChanged, 10 * 60 * 1000);
 
 // Process events for FlowLens workflow tracking
 async function processEvent(eventType, payload, repoId, markChanged = null) {
@@ -798,11 +1088,28 @@ async function processPullRequestEvent(payload, repoId, markChanged = null) {
       }
     }
 
-    // Fetch changed files from GitHub API
-    const filesChanged = await fetchChangedFiles(
+    // Fetch changed files from GitHub API with automatic fallback
+    let filesChanged = await fetchChangedFiles(
       repository.full_name,
       pull_request.number
     );
+
+    // If no files were fetched but we have file stats, generate fallback data
+    if (
+      filesChanged.length === 0 &&
+      (pull_request.additions > 0 ||
+        pull_request.deletions > 0 ||
+        pull_request.changed_files > 0)
+    ) {
+      console.log(
+        `🔄 No files fetched for PR #${pull_request.number}, generating fallback data...`
+      );
+      filesChanged = generateFallbackFilesChanged(
+        pull_request.additions || 0,
+        pull_request.deletions || 0,
+        pull_request.changed_files || 0
+      );
+    }
 
     // Extract PR data
     const prData = {

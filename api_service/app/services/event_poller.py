@@ -3,7 +3,7 @@
 import asyncio
 from loguru import logger
 from app.data.database import db_helpers
-from app.services.event_processor import process_new_pull_request, process_new_pipeline, process_new_insight
+from app.services.event_processor import process_new_pull_request, process_new_pipeline, process_new_insight, process_failed_insight_retries
 
 _running = True
 
@@ -17,8 +17,10 @@ async def poll_for_events():
     """
     Polls the database every 2 seconds for new or updated records.
     Uses 'processed' column to track which records have been handled.
+    Also processes failed insight retries periodically.
     """
     POLL_INTERVAL = 2  # 2 seconds as requested
+    retry_counter = 0  # Counter for retry processing
     
     logger.info(f"Starting database poller with {POLL_INTERVAL}s interval...")
     
@@ -95,6 +97,15 @@ async def poll_for_events():
                         logger.success(f"Processed insight for PR #{insight['pr_number']} from repository {insight['repo_id']}")
                     except Exception as e:
                         logger.error(f"Failed to process insight {insight['id']}: {e}")
+            
+            # Process failed insight retries every 30 poll cycles (60 seconds)
+            retry_counter += 1
+            if retry_counter >= 30:
+                retry_counter = 0
+                try:
+                    await process_failed_insight_retries()
+                except Exception as e:
+                    logger.error(f"Failed to process insight retries: {e}")
             
             # Sleep before next poll
             await asyncio.sleep(POLL_INTERVAL)
