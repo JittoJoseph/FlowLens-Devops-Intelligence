@@ -1,8 +1,6 @@
 name: Flutter Release APK
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
     types: [closed]
@@ -16,7 +14,7 @@ jobs:
   build-and-release:
     name: Build and Release APK
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || (github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main')
+    if: github.event.pull_request.merged == true
 
     steps:
       - name: Checkout repository
