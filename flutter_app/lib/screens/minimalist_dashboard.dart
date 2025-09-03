@@ -5,7 +5,6 @@ import '../providers/github_provider.dart';
 import '../providers/pr_provider.dart';
 import '../widgets/enhanced_pr_card.dart';
 import '../widgets/modern_floating_action_button.dart';
-import '../widgets/simple_app_header.dart';
 import '../widgets/app_sidebar.dart';
 import '../widgets/status_filter_chips.dart';
 import '../models/pull_request.dart';
@@ -43,7 +42,13 @@ class _DashboardScreenState extends State<DashboardScreen>
     final prProvider = Provider.of<PRProvider>(context, listen: false);
     final githubProvider = Provider.of<GitHubProvider>(context, listen: false);
 
-    // Load PRs for the selected repository
+    // Ensure repositories are loaded if user is connected
+    if (githubProvider.isConnected && githubProvider.repositories.isEmpty) {
+      await githubProvider.loadRepositories();
+    }
+
+    // If no specific repository is selected, load PRs from all repositories
+    // Otherwise, load PRs for the selected repository
     final repositoryId = githubProvider.selectedRepository?.id;
     await prProvider.loadPullRequests(repositoryId: repositoryId);
   }
@@ -59,12 +64,72 @@ class _DashboardScreenState extends State<DashboardScreen>
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       drawer: const AppSidebar(),
+      appBar: AppBar(
+        backgroundColor: AppTheme.cardColor,
+        elevation: 0,
+        foregroundColor: AppTheme.textPrimaryColor,
+        iconTheme: IconThemeData(color: AppTheme.textPrimaryColor),
+        title: Consumer<GitHubProvider>(
+          builder: (context, githubProvider, child) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'FlowLens',
+                  style: AppTheme.premiumHeadingStyle.copyWith(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (githubProvider.isConnected &&
+                    githubProvider.selectedRepository != null)
+                  Text(
+                    githubProvider.selectedRepository!.name,
+                    style: AppTheme.premiumBodyStyle.copyWith(
+                      color: AppTheme.textSecondaryColor,
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  )
+                else if (githubProvider.isConnected)
+                  Text(
+                    'All Repositories',
+                    style: AppTheme.premiumBodyStyle.copyWith(
+                      color: AppTheme.textSecondaryColor,
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  )
+                else
+                  Text(
+                    'DevOps Dashboard',
+                    style: AppTheme.premiumBodyStyle.copyWith(
+                      color: AppTheme.textSecondaryColor,
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            );
+          },
+        ),
+        actions: [
+          IconButton(
+            onPressed: _loadData,
+            icon: Icon(Icons.refresh, color: AppTheme.primaryColor),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
       body: SafeArea(
         child: Column(
           children: [
-            // Simple Header
-            SimpleAppHeader(onRefresh: _loadData),
-
             // Scrollable Content
             Expanded(
               child: CustomScrollView(
@@ -212,9 +277,100 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _buildRepositoryHeader() {
     return Consumer<GitHubProvider>(
       builder: (context, githubProvider, child) {
-        if (!githubProvider.isConnected ||
-            githubProvider.selectedRepository == null) {
+        if (!githubProvider.isConnected) {
           return _buildConnectPrompt();
+        }
+
+        // If connected but no specific repository selected, show "All Repositories" view
+        if (githubProvider.selectedRepository == null) {
+          return Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppTheme.cardColor,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                width: 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primaryColor.withValues(alpha: 0.08),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+                BoxShadow(
+                  color: AppTheme.primaryColor.withValues(alpha: 0.04),
+                  blurRadius: 32,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        AppTheme.primaryColor.withValues(alpha: 0.15),
+                        AppTheme.primaryColor.withValues(alpha: 0.08),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(
+                    Icons.dashboard,
+                    color: AppTheme.primaryColor,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'All Repositories',
+                        style: AppTheme.premiumHeadingStyle.copyWith(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Viewing pull requests from all connected repositories',
+                        style: AppTheme.premiumBodyStyle.copyWith(
+                          color: AppTheme.textSecondaryColor,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${githubProvider.repositories.length} repos',
+                    style: AppTheme.premiumBodyStyle.copyWith(
+                      color: AppTheme.primaryColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
         }
 
         final repo = githubProvider.selectedRepository!;
@@ -276,6 +432,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                         fontWeight: FontWeight.w700,
                         letterSpacing: -0.3,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 6),
                     Row(
@@ -294,6 +452,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                               fontSize: 14,
                               fontWeight: FontWeight.w500,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ],

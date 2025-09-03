@@ -146,6 +146,8 @@ class _PremiumInsightsScreenState extends State<PremiumInsightsScreen>
       elevation: 0,
       stretch: true,
       backgroundColor: Colors.transparent,
+      foregroundColor: Colors.white, // This ensures the back button is visible
+      iconTheme: const IconThemeData(color: Colors.white),
       flexibleSpace: FlexibleSpaceBar(
         stretchModes: const [
           StretchMode.zoomBackground,
