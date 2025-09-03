@@ -1,0 +1,198 @@
+name: Flutter Release APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+env:
+  FLUTTER_VERSION: "3.24.3"
+  JAVA_VERSION: "17"
+
+jobs:
+  # Job to build and release APK when PR is merged to main
+  build-and-release:
+    name: Build and Release APK
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: "stable"
+          cache: true
+
+      - name: Get Flutter dependencies
+        working-directory: ./flutter_app
+        run: flutter pub get
+
+      - name: Run Flutter doctor
+        run: flutter doctor -v
+
+      - name: Run Flutter analyze
+        working-directory: ./flutter_app
+        run: flutter analyze
+
+      - name: Run Flutter tests
+        working-directory: ./flutter_app
+        run: flutter test
+
+      - name: Generate version info
+        id: version_info
+        run: |
+          # Extract version from pubspec.yaml
+          VERSION=$(grep '^version:' flutter_app/pubspec.yaml | cut -d ' ' -f 2 | tr -d '\r' | tr -d '\n')
+          BUILD_NUMBER=$(date +%s)
+
+          # Clean version string
+          VERSION_CLEAN=$(echo $VERSION | sed 's/+.*//')
+
+          echo "version=$VERSION_CLEAN" >> $GITHUB_OUTPUT
+          echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
+          echo "release_name=FlowLens-v$VERSION_CLEAN" >> $GITHUB_OUTPUT
+
+      - name: Build APK
+        working-directory: ./flutter_app
+        run: |
+          flutter build apk --release \
+            --build-name=${{ steps.version_info.outputs.version }} \
+            --build-number=${{ steps.version_info.outputs.build_number }}
+
+      - name: Build App Bundle
+        working-directory: ./flutter_app
+        run: |
+          flutter build appbundle --release \
+            --build-name=${{ steps.version_info.outputs.version }} \
+            --build-number=${{ steps.version_info.outputs.build_number }}
+
+      - name: Rename APK and AAB files
+        run: |
+          cd flutter_app/build/app/outputs/flutter-apk
+          mv app-release.apk flowlens-${{ steps.version_info.outputs.version }}-release.apk
+
+          cd ../bundle/release
+          mv app-release.aab flowlens-${{ steps.version_info.outputs.version }}-release.aab
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the latest commits since last release
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            COMMITS=$(git log --oneline --max-count=10)
+          else
+            COMMITS=$(git log ${LAST_TAG}..HEAD --oneline)
+          fi
+
+          # Create changelog file
+          cat > CHANGELOG.md << 'EOF'
+          ## What's New in FlowLens v${{ steps.version_info.outputs.version }}
+
+          ### Recent Changes:
+          EOF
+
+          # Add commits to changelog
+          echo "$COMMITS" >> CHANGELOG.md
+
+          cat >> CHANGELOG.md << 'EOF'
+
+          ### Technical Details:
+          - App Version: ${{ steps.version_info.outputs.version }}
+          - Build Number: ${{ steps.version_info.outputs.build_number }}
+          - Flutter Version: ${{ env.FLUTTER_VERSION }}
+
+          ### Download:
+          - APK: Direct installation file for Android devices
+          - AAB: App Bundle for Google Play Store distribution
+
+          ### Installation:
+          1. Download the APK file
+          2. Enable 'Unknown sources' in your Android device settings
+          3. Install the APK file
+          4. Enjoy FlowLens!
+          EOF
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.version_info.outputs.version }}-${{ steps.version_info.outputs.build_number }}
+          name: ${{ steps.version_info.outputs.release_name }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+          files: |
+            ./flutter_app/build/app/outputs/flutter-apk/flowlens-${{ steps.version_info.outputs.version }}-release.apk
+            ./flutter_app/build/app/outputs/bundle/release/flowlens-${{ steps.version_info.outputs.version }}-release.aab
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-builds-${{ steps.version_info.outputs.version }}
+          path: |
+            flutter_app/build/app/outputs/flutter-apk/*.apk
+            flutter_app/build/app/outputs/bundle/release/*.aab
+          retention-days: 30
+
+      - name: Notify build completion
+        run: |
+          echo "✅ FlowLens Release Build Completed Successfully!"
+          echo "📱 APK: flowlens-${{ steps.version_info.outputs.version }}-release.apk"
+          echo "📦 AAB: flowlens-${{ steps.version_info.outputs.version }}-release.aab"
+          echo "🏷️ Release created with tag: v${{ steps.version_info.outputs.version }}-${{ steps.version_info.outputs.build_number }}"
+
+  # Separate job for quality checks on PRs (non-blocking)
+  quality-check:
+    name: Quality Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: "stable"
+          cache: true
+
+      - name: Get Flutter dependencies
+        working-directory: ./flutter_app
+        run: flutter pub get
+
+      - name: Run Flutter analyze
+        working-directory: ./flutter_app
+        run: flutter analyze
+
+      - name: Run Flutter tests
+        working-directory: ./flutter_app
+        run: flutter test
+
+      - name: Check build (without release)
+        working-directory: ./flutter_app
+        run: flutter build apk --debug
