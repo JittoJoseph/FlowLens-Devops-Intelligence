@@ -51,7 +51,7 @@ We believe in clean code and even cleaner documentation. Our repository is struc
 - **[Flutter Application Guide](./docs/flutter_app.md)**: Documentation for the mobile client.
 
 ---
-
+<div style="position: relative; padding-bottom: 62.5%; height: 0;"><iframe src="https://www.loom.com/embed/4ca4a08ba3cb4876a341ca1a7d8ed10c?sid=2701aac7-07d7-4020-af7b-4f2e8c474c1c" frameborder="0" webkitallowfullscreen mozallowfullscreen allowfullscreen style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></iframe></div>
 
 https://www.loom.com/share/4ca4a08ba3cb4876a341ca1a7d8ed10c
 
@@ -97,4 +97,5 @@ With the backend running, you can now launch the mobile client.
 >
 > *Defining the infinite possibilities in your DevOps pipeline.*
 > ‎ 
+
 
