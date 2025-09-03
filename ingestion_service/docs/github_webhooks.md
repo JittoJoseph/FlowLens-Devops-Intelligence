@@ -43,3 +43,11 @@ GitHub will immediately send a `ping` event. In the webhook settings, you should
 - **GitHub's "Recent Deliveries" Tab**: This interface is invaluable for debugging. You can inspect the exact request headers and payloads sent by GitHub, as well as the response received from your service.
 - **Service Logs**: Monitor the logs of your Ingestion Service (e.g., via the Render dashboard) to see real-time processing of incoming events.
 - **Redeliver Events**: You can use the "Redeliver" button in the GitHub UI to resend a specific event, which is useful for testing without having to perform the GitHub action again.
+
+</br>
+
+> ‎ 
+> **</> Built by Mission Control | DevByZero 2025**
+>
+> *Defining the infinite possibilities in your DevOps pipeline.*
+> ‎ 

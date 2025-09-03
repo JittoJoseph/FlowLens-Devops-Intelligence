@@ -61,9 +61,8 @@ The Ingestion service will be available at `http://localhost:3000`.
 
 </br>
 
-> #
->
+> ‎ 
 > **</> Built by Mission Control | DevByZero 2025**
 >
 > *Defining the infinite possibilities in your DevOps pipeline.*
-> ##
+> ‎ 
