@@ -16,6 +16,8 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
   late AnimationController _contentController;
   late Animation<double> _buttonAnimation;
   late Animation<double> _contentAnimation;
+  bool _servicesHealthy = false;
+  bool _checkingHealth = true;
 
   @override
   void initState() {
@@ -40,6 +42,7 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
     );
 
     _startAnimations();
+    _performBackgroundHealthChecks();
   }
 
   void _startAnimations() async {
@@ -47,6 +50,26 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
     _contentController.forward();
     await Future.delayed(const Duration(milliseconds: 400));
     _buttonController.forward();
+  }
+
+  void _performBackgroundHealthChecks() async {
+    // Ensure this runs after the initial build is complete
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final githubProvider = Provider.of<GitHubProvider>(
+        context,
+        listen: false,
+      );
+
+      await githubProvider.checkServicesHealth();
+
+      // Check if the widget is still mounted before calling setState
+      if (mounted) {
+        setState(() {
+          _servicesHealthy = githubProvider.servicesHealthy;
+          _checkingHealth = false;
+        });
+      }
+    });
   }
 
   @override
@@ -169,6 +192,12 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
                       },
                     ),
 
+                    // Health status indicator
+                    if (!_checkingHealth) ...[
+                      const SizedBox(height: 12),
+                      _buildHealthStatusIndicator(),
+                    ],
+
                     if (gitHubProvider.hasError) ...[
                       const SizedBox(height: 16),
                       Container(
@@ -264,22 +293,79 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
   }
 
   Widget _buildConnectButton(BuildContext context, GitHubProvider provider) {
+    final isEnabled = _servicesHealthy && !_checkingHealth;
+
     return ElevatedButton.icon(
-      onPressed: () => _handleConnect(context, provider),
-      icon: const Icon(Icons.link_outlined, size: 24),
+      onPressed: isEnabled ? () => _handleConnect(context, provider) : null,
+      icon: Icon(
+        _checkingHealth
+            ? Icons.health_and_safety_outlined
+            : _servicesHealthy
+            ? Icons.link_outlined
+            : Icons.warning_outlined,
+        size: 24,
+      ),
       label: Text(
-        'Connect to GitHub',
+        _checkingHealth
+            ? 'Checking Services...'
+            : _servicesHealthy
+            ? 'Connect to GitHub'
+            : 'Services Unavailable',
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
-          color: Colors.white,
+          color: isEnabled ? Colors.white : Colors.white70,
           fontWeight: FontWeight.w600,
         ),
       ),
       style: ElevatedButton.styleFrom(
-        backgroundColor: AppTheme.primaryColor,
+        backgroundColor: isEnabled
+            ? AppTheme.primaryColor
+            : AppTheme.textHintColor,
         foregroundColor: Colors.white,
-        elevation: 12,
+        elevation: isEnabled ? 12 : 4,
         shadowColor: AppTheme.primaryColor.withValues(alpha: 0.3),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+    );
+  }
+
+  Widget _buildHealthStatusIndicator() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _servicesHealthy
+            ? AppTheme.successColor.withValues(alpha: 0.1)
+            : AppTheme.errorColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _servicesHealthy
+              ? AppTheme.successColor.withValues(alpha: 0.2)
+              : AppTheme.errorColor.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _servicesHealthy ? Icons.check_circle_outline : Icons.error_outline,
+            color: _servicesHealthy
+                ? AppTheme.successColor
+                : AppTheme.errorColor,
+            size: 16,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _servicesHealthy
+                  ? 'Backend services are healthy and ready'
+                  : 'Backend services are currently unavailable',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _servicesHealthy
+                    ? AppTheme.successColor
+                    : AppTheme.errorColor,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -320,7 +406,8 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
 
     if (provider.isConnected && mounted) {
       if (context.mounted) {
-        Navigator.pushReplacementNamed(context, '/dashboard');
+        // Navigate to repositories screen instead of dashboard
+        Navigator.pushReplacementNamed(context, '/repositories');
       }
     }
   }
