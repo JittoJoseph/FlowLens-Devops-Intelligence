@@ -1,9 +1,8 @@
 name: Flutter Release APK
 
 on:
-  pull_request:
+  push:
     branches: [main]
-    types: [closed]
 
 env:
   FLUTTER_VERSION: "3.35.2"
@@ -14,7 +13,6 @@ jobs:
   build-and-release:
     name: Build and Release APK
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true
 
     steps:
       - name: Checkout repository
@@ -158,45 +156,3 @@ jobs:
           echo "📱 APK: flowlens-${{ steps.version_info.outputs.version }}-release.apk"
           echo "📦 AAB: flowlens-${{ steps.version_info.outputs.version }}-release.aab"
           echo "🏷️ Release created with tag: v${{ steps.version_info.outputs.version }}-${{ steps.version_info.outputs.build_number }}"
-
-  # Separate job for quality checks on PRs (non-blocking)
-  quality-check:
-    name: Quality Check
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.pull_request.merged == false
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: "zulu"
-          java-version: ${{ env.JAVA_VERSION }}
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: "stable"
-          cache: true
-
-      - name: Disable Flutter analytics
-        run: flutter config --no-analytics
-
-      - name: Get Flutter dependencies
-        working-directory: ./flutter_app
-        run: flutter pub get
-
-      - name: Run Flutter analyze
-        working-directory: ./flutter_app
-        run: flutter analyze
-
-      - name: Run Flutter tests
-        working-directory: ./flutter_app
-        run: flutter test
-
-      - name: Check build (without release)
-        working-directory: ./flutter_app
-        run: flutter build apk --debug
