@@ -307,21 +307,36 @@ class _DashboardScreenState extends State<DashboardScreen>
                                       pullRequest: filteredPRs[index],
                                       insight: prProvider.getInsightForPR(
                                         filteredPRs[index].number,
+                                        repositoryId:
+                                            filteredPRs[index].repositoryId,
                                       ),
                                       onTap: () {
                                         // Set the selected PR in the provider
-                                        Provider.of<PRProvider>(
-                                          context,
-                                          listen: false,
-                                        ).selectPR(filteredPRs[index]);
+                                        final prProvider =
+                                            Provider.of<PRProvider>(
+                                              context,
+                                              listen: false,
+                                            );
+                                        prProvider.selectPR(filteredPRs[index]);
+
+                                        // Get the insight for this PR to extract risk level
+                                        final insight = prProvider
+                                            .getInsightForPR(
+                                              filteredPRs[index].number,
+                                              repositoryId: filteredPRs[index]
+                                                  .repositoryId,
+                                            );
 
                                         // Navigate to premium insights screen
+                                        // Pass the risk level from the dashboard to ensure consistency
                                         Navigator.of(context).push(
                                           MaterialPageRoute(
                                             builder: (context) =>
                                                 PremiumInsightsScreen(
                                                   pullRequest:
                                                       filteredPRs[index],
+                                                  overrideRiskLevel:
+                                                      insight?.riskLevel,
                                                 ),
                                           ),
                                         );
