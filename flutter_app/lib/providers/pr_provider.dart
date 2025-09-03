@@ -89,13 +89,28 @@ class PRProvider extends ChangeNotifier {
         }
       }
 
-      final updatedPR = _pullRequests[prIndex].copyWith(
-        status: convertState(update.state),
-        updatedAt: DateTime.now(),
+      final newStatus = convertState(update.state);
+      final currentPR = _pullRequests[prIndex];
+
+      // Only update status if the new status has higher or equal priority
+      final shouldUpdate = newStatus.shouldOverride(currentPR.status);
+
+      // Debug logging to track status updates with reasoning
+      final reason = !shouldUpdate
+          ? (newStatus == currentPR.status ? "DUPLICATE" : "LOWER_PRIORITY")
+          : "ACCEPTED";
+      debugPrint(
+        '📊 PR #${update.prNumber}: ${currentPR.status.name} -> ${newStatus.name} ($reason)',
       );
 
-      _pullRequests[prIndex] = updatedPR;
-      notifyListeners();
+      if (shouldUpdate) {
+        final updatedPR = currentPR.copyWith(
+          status: newStatus,
+          updatedAt: DateTime.now(),
+        );
+        _pullRequests[prIndex] = updatedPR;
+        notifyListeners();
+      }
     } else {
       // PR not found in current list - this might be a new PR
       // Only fetch if it's a newly opened PR and we're viewing the same repository
@@ -161,7 +176,7 @@ class PRProvider extends ChangeNotifier {
     }
   }
 
-  // Load pull requests from API (replaces the old loadPullRequests)
+  // Load pull requests from API
   Future<void> loadPullRequests({String? repositoryId}) async {
     _isLoading = true;
     _errorMessage = null;
