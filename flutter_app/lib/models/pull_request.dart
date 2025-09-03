@@ -12,6 +12,8 @@ enum PRStatus {
 
 @immutable
 class PullRequest {
+  final String? id; // UUID from API
+  final String? repositoryId; // Repository UUID
   final int number;
   final String title;
   final String description;
@@ -29,6 +31,8 @@ class PullRequest {
   final bool isDraft;
 
   const PullRequest({
+    this.id,
+    this.repositoryId,
     required this.number,
     required this.title,
     required this.description,
@@ -47,6 +51,8 @@ class PullRequest {
   });
 
   PullRequest copyWith({
+    String? id,
+    String? repositoryId,
     int? number,
     String? title,
     String? description,
@@ -64,6 +70,8 @@ class PullRequest {
     bool? isDraft,
   }) {
     return PullRequest(
+      id: id ?? this.id,
+      repositoryId: repositoryId ?? this.repositoryId,
       number: number ?? this.number,
       title: title ?? this.title,
       description: description ?? this.description,
@@ -84,6 +92,8 @@ class PullRequest {
 
   Map<String, dynamic> toJson() {
     return {
+      'id': id,
+      'repositoryId': repositoryId,
       'number': number,
       'title': title,
       'description': description,
@@ -104,6 +114,8 @@ class PullRequest {
 
   factory PullRequest.fromJson(Map<String, dynamic> json) {
     return PullRequest(
+      id: json['id'] as String?,
+      repositoryId: json['repositoryId'] as String?,
       number: json['number'] as int,
       title: json['title'] as String,
       description: json['description'] as String,
@@ -119,6 +131,57 @@ class PullRequest {
       deletions: json['deletions'] as int,
       branchName: json['branchName'] as String,
       isDraft: json['isDraft'] as bool? ?? false,
+    );
+  }
+
+  // Factory constructor for API response format
+  factory PullRequest.fromApiJson(Map<String, dynamic> json) {
+    // Convert API state to our PRStatus enum
+    PRStatus convertState(String state) {
+      switch (state.toLowerCase()) {
+        case 'open':
+        case 'opened':
+          return PRStatus.pending;
+        case 'building':
+          return PRStatus.building;
+        case 'buildpassed':
+          return PRStatus.buildPassed;
+        case 'buildfailed':
+          return PRStatus.buildFailed;
+        case 'approved':
+          return PRStatus.approved;
+        case 'merged':
+          return PRStatus.merged;
+        case 'closed':
+          return PRStatus.closed;
+        default:
+          return PRStatus.pending;
+      }
+    }
+
+    return PullRequest(
+      id: json['id'] as String?,
+      repositoryId: json['repo_id'] as String?,
+      number: json['pr_number'] as int,
+      title: json['title'] as String,
+      description: json['description'] as String? ?? '',
+      author: json['author'] as String,
+      authorAvatar: json['author_avatar'] as String? ?? '',
+      commitSha: json['commit_sha'] as String? ?? '',
+      repositoryName: '', // Will need to be populated from repository data
+      createdAt: DateTime.parse(json['created_at'] as String),
+      updatedAt: DateTime.parse(json['updated_at'] as String),
+      status: convertState(json['state'] as String? ?? 'pending'),
+      filesChanged: json['changed_files'] != null
+          ? [
+              for (int i = 0; i < (json['changed_files'] as int); i++)
+                'File ${i + 1}',
+            ]
+          : [], // Generate placeholder file names based on count
+      additions: json['additions'] as int? ?? 0,
+      deletions: json['deletions'] as int? ?? 0,
+      branchName: json['branch_name'] as String? ?? '',
+      isDraft: json['is_draft'] as bool? ?? false,
     );
   }
 

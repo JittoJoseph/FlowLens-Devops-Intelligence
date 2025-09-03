@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/premium_theme.dart';
@@ -5,11 +6,10 @@ import '../providers/github_provider.dart';
 import '../providers/pr_provider.dart';
 import '../widgets/enhanced_pr_card.dart';
 import '../widgets/modern_floating_action_button.dart';
-import '../widgets/simple_app_header.dart';
 import '../widgets/app_sidebar.dart';
 import '../widgets/status_filter_chips.dart';
 import '../models/pull_request.dart';
-import 'pr_details_screen.dart';
+import '../screens/premium_insights_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -23,6 +23,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   late AnimationController _animationController;
   String _searchQuery = '';
   PRStatus? _statusFilter;
+  StreamSubscription? _newPRSubscription;
 
   @override
   void initState() {
@@ -32,16 +33,66 @@ class _DashboardScreenState extends State<DashboardScreen>
       vsync: this,
     );
     _animationController.forward();
-    _loadData();
+
+    // Load data after the frame is built to avoid setState during build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadData();
+      _setupNewPRListener();
+    });
+  }
+
+  void _setupNewPRListener() {
+    final prProvider = Provider.of<PRProvider>(context, listen: false);
+    _newPRSubscription = prProvider.newPRStream.listen((newPR) {
+      // Show a subtle notification when a new PR is automatically added
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.new_releases, color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'New PR #${newPR.number}: ${newPR.title}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: AppTheme.primaryColor,
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    });
   }
 
   void _loadData() async {
     final prProvider = Provider.of<PRProvider>(context, listen: false);
-    await prProvider.loadPullRequests();
+    final githubProvider = Provider.of<GitHubProvider>(context, listen: false);
+
+    // Ensure repositories are loaded if user is connected
+    if (githubProvider.isConnected && githubProvider.repositories.isEmpty) {
+      await githubProvider.loadRepositories();
+    }
+
+    // If no specific repository is selected, load PRs from all repositories
+    // Otherwise, load PRs for the selected repository
+    final repositoryId = githubProvider.selectedRepository?.id;
+    await prProvider.loadPullRequests(repositoryId: repositoryId);
   }
 
   @override
   void dispose() {
+    _newPRSubscription?.cancel();
     _animationController.dispose();
     super.dispose();
   }
@@ -51,12 +102,107 @@ class _DashboardScreenState extends State<DashboardScreen>
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       drawer: const AppSidebar(),
+      appBar: AppBar(
+        backgroundColor: AppTheme.cardColor,
+        elevation: 0,
+        foregroundColor: AppTheme.textPrimaryColor,
+        iconTheme: IconThemeData(color: AppTheme.textPrimaryColor),
+        title: Consumer<GitHubProvider>(
+          builder: (context, githubProvider, child) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'FlowLens',
+                  style: AppTheme.premiumHeadingStyle.copyWith(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (githubProvider.isConnected &&
+                    githubProvider.selectedRepository != null)
+                  Text(
+                    githubProvider.selectedRepository!.name,
+                    style: AppTheme.premiumBodyStyle.copyWith(
+                      color: AppTheme.textSecondaryColor,
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  )
+                else if (githubProvider.isConnected)
+                  Text(
+                    'All Repositories',
+                    style: AppTheme.premiumBodyStyle.copyWith(
+                      color: AppTheme.textSecondaryColor,
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  )
+                else
+                  Text(
+                    'DevOps Dashboard',
+                    style: AppTheme.premiumBodyStyle.copyWith(
+                      color: AppTheme.textSecondaryColor,
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            );
+          },
+        ),
+        actions: [
+          // Background fetching indicator
+          Consumer<PRProvider>(
+            builder: (context, prProvider, child) {
+              if (prProvider.isFetchingNewPR) {
+                return Container(
+                  padding: const EdgeInsets.all(8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            AppTheme.primaryColor.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'New PR',
+                        style: AppTheme.premiumBodyStyle.copyWith(
+                          fontSize: 12,
+                          color: AppTheme.primaryColor,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+          IconButton(
+            onPressed: _loadData,
+            icon: Icon(Icons.refresh, color: AppTheme.primaryColor),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
       body: SafeArea(
         child: Column(
           children: [
-            // Simple Header
-            SimpleAppHeader(onRefresh: _loadData),
-
             // Scrollable Content
             Expanded(
               child: CustomScrollView(
@@ -115,6 +261,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                         prProvider.pullRequests,
                       );
 
+                      if (filteredPRs.isEmpty) {
+                        return SliverFillRemaining(
+                          child: _buildEmptyPRsState(),
+                        );
+                      }
+
                       return SliverPadding(
                         padding: const EdgeInsets.symmetric(horizontal: 20),
                         sliver: SliverList(
@@ -153,6 +305,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                                         ),
                                     child: EnhancedPRCard(
                                       pullRequest: filteredPRs[index],
+                                      insight: prProvider.getInsightForPR(
+                                        filteredPRs[index].number,
+                                      ),
                                       onTap: () {
                                         // Set the selected PR in the provider
                                         Provider.of<PRProvider>(
@@ -160,11 +315,14 @@ class _DashboardScreenState extends State<DashboardScreen>
                                           listen: false,
                                         ).selectPR(filteredPRs[index]);
 
-                                        // Navigate to PR details screen
+                                        // Navigate to premium insights screen
                                         Navigator.of(context).push(
                                           MaterialPageRoute(
                                             builder: (context) =>
-                                                const PRDetailsScreen(),
+                                                PremiumInsightsScreen(
+                                                  pullRequest:
+                                                      filteredPRs[index],
+                                                ),
                                           ),
                                         );
                                       },
@@ -192,9 +350,100 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _buildRepositoryHeader() {
     return Consumer<GitHubProvider>(
       builder: (context, githubProvider, child) {
-        if (!githubProvider.isConnected ||
-            githubProvider.selectedRepository == null) {
+        if (!githubProvider.isConnected) {
           return _buildConnectPrompt();
+        }
+
+        // If connected but no specific repository selected, show "All Repositories" view
+        if (githubProvider.selectedRepository == null) {
+          return Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppTheme.cardColor,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                width: 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primaryColor.withValues(alpha: 0.08),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+                BoxShadow(
+                  color: AppTheme.primaryColor.withValues(alpha: 0.04),
+                  blurRadius: 32,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        AppTheme.primaryColor.withValues(alpha: 0.15),
+                        AppTheme.primaryColor.withValues(alpha: 0.08),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(
+                    Icons.dashboard,
+                    color: AppTheme.primaryColor,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'All Repositories',
+                        style: AppTheme.premiumHeadingStyle.copyWith(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Viewing pull requests from all connected repositories',
+                        style: AppTheme.premiumBodyStyle.copyWith(
+                          color: AppTheme.textSecondaryColor,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${githubProvider.repositories.length} repos',
+                    style: AppTheme.premiumBodyStyle.copyWith(
+                      color: AppTheme.primaryColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
         }
 
         final repo = githubProvider.selectedRepository!;
@@ -256,6 +505,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                         fontWeight: FontWeight.w700,
                         letterSpacing: -0.3,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 6),
                     Row(
@@ -274,6 +525,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                               fontSize: 14,
                               fontWeight: FontWeight.w500,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ],
@@ -413,8 +666,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           CurvedAnimation(
             parent: _animationController,
             curve: Interval(
-              index * 0.1,
-              0.8 + (index * 0.1),
+              (index * 0.1).clamp(0.0, 0.8),
+              (0.8 + (index * 0.1)).clamp(0.1, 1.0),
               curve: Curves.easeOutBack,
             ),
           ),
@@ -423,13 +676,16 @@ class _DashboardScreenState extends State<DashboardScreen>
         return Transform.translate(
           offset: Offset(0, (1 - delayedAnimation.value) * 30),
           child: Opacity(
-            opacity: delayedAnimation.value,
+            opacity: delayedAnimation.value.clamp(0.0, 1.0),
             child: Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color: AppTheme.cardColor,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: color.withValues(alpha: 0.15), width: 1),
+                border: Border.all(
+                  color: color.withValues(alpha: 0.15),
+                  width: 1,
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: color.withValues(alpha: 0.08),
@@ -662,6 +918,30 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
             ),
             child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyPRsState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.merge_outlined, size: 64, color: AppTheme.textHintColor),
+          const SizedBox(height: 16),
+          Text(
+            'No pull requests found',
+            style: AppTheme.premiumHeadingStyle.copyWith(fontSize: 18),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'There are no pull requests matching your current filters',
+            style: AppTheme.premiumBodyStyle.copyWith(
+              color: AppTheme.textSecondaryColor,
+            ),
+            textAlign: TextAlign.center,
           ),
         ],
       ),

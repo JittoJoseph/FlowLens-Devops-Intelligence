@@ -85,47 +85,97 @@ class AppSidebar extends StatelessWidget {
                           Icons.dashboard_outlined,
                           'Dashboard',
                           'Overview & insights',
-                          true,
-                          () => Navigator.pop(context),
+                          _isDashboardActive(context),
+                          () {
+                            Navigator.pop(context);
+                            if (!_isDashboardActive(context)) {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/dashboard',
+                              );
+                            }
+                          },
                         ),
                         _buildMenuItem(
                           Icons.account_tree_outlined,
                           'Repositories',
                           'Manage repos',
-                          false,
+                          ModalRoute.of(context)?.settings.name ==
+                              '/repositories',
                           () {
                             Navigator.pop(context);
-                            // TODO: Navigate to repositories
+                            if (ModalRoute.of(context)?.settings.name !=
+                                '/repositories') {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/repositories',
+                              );
+                            }
                           },
                         ),
                         _buildMenuItem(
                           Icons.merge_outlined,
                           'Pull Requests',
                           'Review & merge',
-                          false,
+                          ModalRoute.of(context)?.settings.name ==
+                              '/pull-requests',
                           () {
                             Navigator.pop(context);
-                            // TODO: Navigate to PRs
+                            if (ModalRoute.of(context)?.settings.name !=
+                                '/pull-requests') {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/pull-requests',
+                              );
+                            }
                           },
                         ),
                         _buildMenuItem(
                           Icons.insights_outlined,
-                          'Analytics',
-                          'Performance metrics',
-                          false,
+                          'AI Insights',
+                          'View analysis & reports',
+                          ModalRoute.of(context)?.settings.name == '/insights',
                           () {
                             Navigator.pop(context);
-                            // TODO: Navigate to analytics
+                            if (ModalRoute.of(context)?.settings.name !=
+                                '/insights') {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/insights',
+                              );
+                            }
                           },
                         ),
                         _buildMenuItem(
                           Icons.build_outlined,
                           'CI/CD Pipeline',
                           'Build & deploy',
-                          false,
+                          ModalRoute.of(context)?.settings.name == '/pipeline',
                           () {
                             Navigator.pop(context);
-                            // TODO: Navigate to pipeline
+                            if (ModalRoute.of(context)?.settings.name !=
+                                '/pipeline') {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/pipeline',
+                              );
+                            }
+                          },
+                        ),
+                        _buildMenuItem(
+                          Icons.analytics_outlined,
+                          'Analytics',
+                          'Performance metrics',
+                          ModalRoute.of(context)?.settings.name == '/analytics',
+                          () {
+                            Navigator.pop(context);
+                            if (ModalRoute.of(context)?.settings.name !=
+                                '/analytics') {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/analytics',
+                              );
+                            }
                           },
                         ),
                         const SizedBox(height: 12),
@@ -157,16 +207,6 @@ class AppSidebar extends StatelessWidget {
                             // TODO: Navigate to settings
                           },
                         ),
-                        _buildMenuItem(
-                          Icons.help_outline,
-                          'Help & Support',
-                          'Get assistance',
-                          false,
-                          () {
-                            Navigator.pop(context);
-                            // TODO: Navigate to help
-                          },
-                        ),
                       ]),
                     ),
                   ),
@@ -196,6 +236,12 @@ class AppSidebar extends StatelessWidget {
                       () {
                         Navigator.pop(context);
                         githubProvider.disconnect();
+                        // Navigate back to GitHub connect screen
+                        Navigator.pushNamedAndRemoveUntil(
+                          context,
+                          '/connect',
+                          (route) => false,
+                        );
                       },
                       isDestructive: true,
                     );
@@ -207,7 +253,7 @@ class AppSidebar extends StatelessWidget {
                       false,
                       () {
                         Navigator.pop(context);
-                        // TODO: Navigate to GitHub connect
+                        Navigator.pushReplacementNamed(context, '/connect');
                       },
                     );
                   }
@@ -312,5 +358,32 @@ class AppSidebar extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  // Helper method to check if we're currently on a dashboard screen
+  bool _isDashboardActive(BuildContext context) {
+    final routeName = ModalRoute.of(context)?.settings.name;
+
+    // Check for named dashboard route
+    if (routeName == '/dashboard') {
+      return true;
+    }
+
+    // Check if the current widget tree contains a DashboardScreen
+    // This handles cases where we navigate via MaterialPageRoute
+    try {
+      final currentRoute = ModalRoute.of(context);
+      if (currentRoute?.settings.arguments != null) {
+        final args = currentRoute!.settings.arguments as Map<String, dynamic>?;
+        // If route has repositoryId argument, it's likely a dashboard
+        if (args?.containsKey('repositoryId') == true) {
+          return true;
+        }
+      }
+    } catch (e) {
+      // If we can't determine from arguments, fall back to route name check
+    }
+
+    return false;
   }
 }

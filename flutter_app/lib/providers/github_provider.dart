@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/repository.dart';
+import '../services/api_service.dart';
 
 enum GitHubConnectionStatus { disconnected, connecting, connected, error }
 
@@ -10,6 +11,8 @@ class GitHubProvider extends ChangeNotifier {
   String? _errorMessage;
   String? _username;
   String? _avatarUrl;
+  bool _isLoading = false;
+  bool _servicesHealthy = false;
 
   // Getters
   GitHubConnectionStatus get status => _status;
@@ -18,10 +21,35 @@ class GitHubProvider extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   String? get username => _username;
   String? get avatarUrl => _avatarUrl;
+  bool get isLoading => _isLoading;
+  bool get servicesHealthy => _servicesHealthy;
 
   bool get isConnected => _status == GitHubConnectionStatus.connected;
   bool get isConnecting => _status == GitHubConnectionStatus.connecting;
   bool get hasError => _status == GitHubConnectionStatus.error;
+
+  // Check services health in background
+  Future<void> checkServicesHealth() async {
+    _servicesHealthy = await ApiService.performHealthChecks();
+    notifyListeners();
+  }
+
+  // Load repositories from API
+  Future<void> loadRepositories() async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      _repositories = await ApiService.getRepositories();
+      _isLoading = false;
+    } catch (e) {
+      _errorMessage = 'Failed to load repositories: ${e.toString()}';
+      _isLoading = false;
+    }
+
+    notifyListeners();
+  }
 
   // Simulate GitHub connection (for demo purposes)
   Future<void> connectToGitHub() async {
@@ -30,14 +58,24 @@ class GitHubProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Simulate API call delay
-      await Future.delayed(const Duration(seconds: 2));
+      // First check if services are healthy
+      if (!_servicesHealthy) {
+        _status = GitHubConnectionStatus.error;
+        _errorMessage =
+            'Backend services are not available. Please try again later.';
+        notifyListeners();
+        return;
+      }
 
-      // Simulate successful connection with demo data
+      // Simulate connection delay
+      await Future.delayed(const Duration(seconds: 1));
+
+      // Load real repositories from API
+      await loadRepositories();
+
+      // Set connected state
       _username = 'DevOps-Malayalam';
       _avatarUrl = 'https://avatars.githubusercontent.com/u/example';
-      _repositories = _generateDemoRepositories();
-      _selectedRepository = _repositories.first;
       _status = GitHubConnectionStatus.connected;
     } catch (e) {
       _status = GitHubConnectionStatus.error;
@@ -54,64 +92,12 @@ class GitHubProvider extends ChangeNotifier {
     _errorMessage = null;
     _username = null;
     _avatarUrl = null;
+    _servicesHealthy = false;
     notifyListeners();
   }
 
   void selectRepository(Repository repository) {
     _selectedRepository = repository;
     notifyListeners();
-  }
-
-  List<Repository> _generateDemoRepositories() {
-    final now = DateTime.now();
-    return [
-      Repository(
-        name: 'mission-control',
-        fullName: 'DevOps-Malayalam/mission-control',
-        description:
-            'AI-Powered DevOps Workflow Visualizer with real-time insights',
-        owner: 'DevOps-Malayalam',
-        ownerAvatar: 'https://avatars.githubusercontent.com/u/example1',
-        isPrivate: false,
-        defaultBranch: 'main',
-        openPRs: 5,
-        totalPRs: 23,
-        lastActivity: now.subtract(const Duration(hours: 2)),
-        languages: ['Dart', 'Python', 'JavaScript'],
-        stars: 42,
-        forks: 8,
-      ),
-      Repository(
-        name: 'devops-toolkit',
-        fullName: 'DevOps-Malayalam/devops-toolkit',
-        description:
-            'A comprehensive toolkit for DevOps automation and monitoring',
-        owner: 'DevOps-Malayalam',
-        ownerAvatar: 'https://avatars.githubusercontent.com/u/example1',
-        isPrivate: true,
-        defaultBranch: 'main',
-        openPRs: 3,
-        totalPRs: 15,
-        lastActivity: now.subtract(const Duration(days: 1)),
-        languages: ['Python', 'Shell', 'Docker'],
-        stars: 18,
-        forks: 3,
-      ),
-      Repository(
-        name: 'flutter-analytics',
-        fullName: 'DevOps-Malayalam/flutter-analytics',
-        description: 'Real-time analytics dashboard built with Flutter',
-        owner: 'DevOps-Malayalam',
-        ownerAvatar: 'https://avatars.githubusercontent.com/u/example1',
-        isPrivate: false,
-        defaultBranch: 'develop',
-        openPRs: 2,
-        totalPRs: 8,
-        lastActivity: now.subtract(const Duration(hours: 6)),
-        languages: ['Dart', 'TypeScript'],
-        stars: 12,
-        forks: 2,
-      ),
-    ];
   }
 }

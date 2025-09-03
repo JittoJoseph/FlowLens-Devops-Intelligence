@@ -3,8 +3,11 @@ import 'package:flutter/foundation.dart';
 @immutable
 class AIInsight {
   final String id;
+  final String? repositoryId; // Repository UUID
   final int prNumber;
   final String commitSha;
+  final String author;
+  final String avatarUrl;
   final RiskLevel riskLevel;
   final String summary;
   final String recommendation;
@@ -14,8 +17,11 @@ class AIInsight {
 
   const AIInsight({
     required this.id,
+    this.repositoryId,
     required this.prNumber,
     required this.commitSha,
+    required this.author,
+    required this.avatarUrl,
     required this.riskLevel,
     required this.summary,
     required this.recommendation,
@@ -26,8 +32,11 @@ class AIInsight {
 
   AIInsight copyWith({
     String? id,
+    String? repositoryId,
     int? prNumber,
     String? commitSha,
+    String? author,
+    String? avatarUrl,
     RiskLevel? riskLevel,
     String? summary,
     String? recommendation,
@@ -37,8 +46,11 @@ class AIInsight {
   }) {
     return AIInsight(
       id: id ?? this.id,
+      repositoryId: repositoryId ?? this.repositoryId,
       prNumber: prNumber ?? this.prNumber,
       commitSha: commitSha ?? this.commitSha,
+      author: author ?? this.author,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
       riskLevel: riskLevel ?? this.riskLevel,
       summary: summary ?? this.summary,
       recommendation: recommendation ?? this.recommendation,
@@ -51,8 +63,11 @@ class AIInsight {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'repositoryId': repositoryId,
       'prNumber': prNumber,
       'commitSha': commitSha,
+      'author': author,
+      'avatarUrl': avatarUrl,
       'riskLevel': riskLevel.name,
       'summary': summary,
       'recommendation': recommendation,
@@ -65,8 +80,11 @@ class AIInsight {
   factory AIInsight.fromJson(Map<String, dynamic> json) {
     return AIInsight(
       id: json['id'] as String,
+      repositoryId: json['repositoryId'] as String?,
       prNumber: json['prNumber'] as int,
       commitSha: json['commitSha'] as String,
+      author: json['author'] as String? ?? '',
+      avatarUrl: json['avatarUrl'] as String? ?? '',
       riskLevel: RiskLevel.values.firstWhere(
         (e) => e.name == json['riskLevel'],
       ),
@@ -75,6 +93,51 @@ class AIInsight {
       createdAt: DateTime.parse(json['createdAt'] as String),
       keyChanges: List<String>.from(json['keyChanges'] as List),
       confidenceScore: (json['confidenceScore'] as num?)?.toDouble() ?? 0.0,
+    );
+  }
+
+  // Factory constructor for API response format
+  factory AIInsight.fromApiJson(Map<String, dynamic> json) {
+    RiskLevel convertRiskLevel(String risk) {
+      switch (risk.toLowerCase()) {
+        case 'low':
+          return RiskLevel.low;
+        case 'medium':
+          return RiskLevel.medium;
+        case 'high':
+          return RiskLevel.high;
+        default:
+          return RiskLevel.medium;
+      }
+    }
+
+    // Helper to safely parse datetime
+    DateTime parseDateTime(String? dateStr) {
+      if (dateStr == null || dateStr.isEmpty) {
+        return DateTime.now();
+      }
+      try {
+        return DateTime.parse(dateStr);
+      } catch (e) {
+        return DateTime.now();
+      }
+    }
+
+    return AIInsight(
+      id: json['id'] as String? ?? '',
+      repositoryId: json['repo_id'] as String?,
+      prNumber: (json['pr_number'] as num?)?.toInt() ?? 0,
+      commitSha: json['commit_sha'] as String? ?? '',
+      author: json['author'] as String? ?? '',
+      avatarUrl: json['avatar_url'] as String? ?? '',
+      riskLevel: convertRiskLevel(json['risk_level'] as String? ?? 'medium'),
+      summary: json['summary'] as String? ?? '',
+      recommendation: json['recommendation'] as String? ?? '',
+      createdAt: parseDateTime(json['created_at'] as String?),
+      keyChanges: json['keyChanges'] != null
+          ? List<String>.from(json['keyChanges'] as List)
+          : [],
+      confidenceScore: (json['confidence_score'] as num?)?.toDouble() ?? 0.0,
     );
   }
 

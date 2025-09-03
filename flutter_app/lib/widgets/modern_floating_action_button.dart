@@ -95,9 +95,9 @@ class _ModernFloatingActionButtonState extends State<ModernFloatingActionButton>
                 borderRadius: BorderRadius.circular(30),
                 splashColor: Colors.white.withValues(alpha: 0.2),
                 child: const Icon(
-                  Icons.add_rounded,
+                  Icons.arrow_forward_ios_rounded,
                   color: Colors.white,
-                  size: 28,
+                  size: 20,
                 ),
               ),
             ),
@@ -148,7 +148,7 @@ class _ModernFloatingActionButtonState extends State<ModernFloatingActionButton>
 
           // Title
           Text(
-            'Quick Actions',
+            'Quick Navigation',
             style: AppTheme.premiumHeadingStyle.copyWith(
               fontSize: 18,
               fontWeight: FontWeight.w600,
@@ -162,46 +162,70 @@ class _ModernFloatingActionButtonState extends State<ModernFloatingActionButton>
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Column(
               children: [
+                // First row
                 _buildActionRow([
                   _buildActionButton(
-                    Icons.add_circle_outline,
-                    'Create PR',
+                    Icons.dashboard_outlined,
+                    'Dashboard',
                     AppTheme.primaryColor,
                     () {
                       Navigator.pop(context);
-                      // TODO: Navigate to create PR
+                      Navigator.pushNamedAndRemoveUntil(
+                        context,
+                        '/dashboard',
+                        (route) => false,
+                      );
                     },
                   ),
                   _buildActionButton(
-                    Icons.rate_review_outlined,
-                    'Review Queue',
-                    AppTheme.successColor,
+                    Icons.account_tree_outlined,
+                    'Repositories',
+                    Colors.blue,
                     () {
                       Navigator.pop(context);
-                      // TODO: Navigate to review queue
+                      Navigator.pushNamed(context, '/repositories');
+                    },
+                  ),
+                  _buildActionButton(
+                    Icons.merge_outlined,
+                    'Pull Requests',
+                    Colors.green,
+                    () {
+                      Navigator.pop(context);
+                      Navigator.pushNamed(context, '/pull-requests');
                     },
                   ),
                 ]),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
 
+                // Second row
                 _buildActionRow([
                   _buildActionButton(
                     Icons.insights_outlined,
-                    'Analytics',
-                    AppTheme.warningColor,
+                    'AI Insights',
+                    Colors.orange,
                     () {
                       Navigator.pop(context);
-                      // TODO: Navigate to analytics
+                      Navigator.pushNamed(context, '/insights');
                     },
                   ),
                   _buildActionButton(
-                    Icons.sync_outlined,
-                    'Sync Data',
-                    AppTheme.primaryColor.withValues(alpha: 0.8),
+                    Icons.build_outlined,
+                    'Pipeline',
+                    Colors.purple,
                     () {
                       Navigator.pop(context);
-                      // TODO: Sync data
+                      Navigator.pushNamed(context, '/pipeline');
+                    },
+                  ),
+                  _buildActionButton(
+                    Icons.analytics_outlined,
+                    'Analytics',
+                    Colors.teal,
+                    () {
+                      Navigator.pop(context);
+                      Navigator.pushNamed(context, '/analytics');
                     },
                   ),
                 ]),
@@ -238,31 +262,34 @@ class _ModernFloatingActionButtonState extends State<ModernFloatingActionButton>
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withValues(alpha: 0.15), width: 1),
         ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(12),
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(icon, color: color, size: 24),
+              child: Icon(icon, color: color, size: 20),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
               label,
               style: AppTheme.premiumBodyStyle.copyWith(
                 color: color,
                 fontWeight: FontWeight.w600,
-                fontSize: 13,
+                fontSize: 11,
               ),
               textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
