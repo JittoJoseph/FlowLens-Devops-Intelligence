@@ -117,10 +117,17 @@ class AppSidebar extends StatelessWidget {
                           Icons.merge_outlined,
                           'Pull Requests',
                           'Review & merge',
-                          false,
+                          ModalRoute.of(context)?.settings.name ==
+                              '/pull-requests',
                           () {
                             Navigator.pop(context);
-                            // TODO: Navigate to PRs
+                            if (ModalRoute.of(context)?.settings.name !=
+                                '/pull-requests') {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/pull-requests',
+                              );
+                            }
                           },
                         ),
                         _buildMenuItem(
@@ -143,10 +150,32 @@ class AppSidebar extends StatelessWidget {
                           Icons.build_outlined,
                           'CI/CD Pipeline',
                           'Build & deploy',
-                          false,
+                          ModalRoute.of(context)?.settings.name == '/pipeline',
                           () {
                             Navigator.pop(context);
-                            // TODO: Navigate to pipeline
+                            if (ModalRoute.of(context)?.settings.name !=
+                                '/pipeline') {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/pipeline',
+                              );
+                            }
+                          },
+                        ),
+                        _buildMenuItem(
+                          Icons.analytics_outlined,
+                          'Analytics',
+                          'Performance metrics',
+                          ModalRoute.of(context)?.settings.name == '/analytics',
+                          () {
+                            Navigator.pop(context);
+                            if (ModalRoute.of(context)?.settings.name !=
+                                '/analytics') {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/analytics',
+                              );
+                            }
                           },
                         ),
                         const SizedBox(height: 12),
@@ -178,16 +207,6 @@ class AppSidebar extends StatelessWidget {
                             // TODO: Navigate to settings
                           },
                         ),
-                        _buildMenuItem(
-                          Icons.help_outline,
-                          'Help & Support',
-                          'Get assistance',
-                          false,
-                          () {
-                            Navigator.pop(context);
-                            // TODO: Navigate to help
-                          },
-                        ),
                       ]),
                     ),
                   ),
@@ -217,6 +236,12 @@ class AppSidebar extends StatelessWidget {
                       () {
                         Navigator.pop(context);
                         githubProvider.disconnect();
+                        // Navigate back to GitHub connect screen
+                        Navigator.pushNamedAndRemoveUntil(
+                          context,
+                          '/connect',
+                          (route) => false,
+                        );
                       },
                       isDestructive: true,
                     );
