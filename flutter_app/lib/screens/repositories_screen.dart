@@ -4,6 +4,7 @@ import '../config/premium_theme.dart';
 import '../providers/github_provider.dart';
 import '../widgets/simple_app_header.dart';
 import '../widgets/app_sidebar.dart';
+import '../widgets/modern_floating_action_button.dart';
 import '../models/repository.dart';
 import 'minimalist_dashboard.dart';
 
@@ -150,6 +151,7 @@ class _RepositoriesScreenState extends State<RepositoriesScreen>
           ],
         ),
       ),
+      floatingActionButton: const ModernFloatingActionButton(),
     );
   }
 

@@ -4,6 +4,7 @@ import '../services/api_service.dart';
 import '../models/ai_insight.dart';
 import '../models/pull_request.dart';
 import '../widgets/app_sidebar.dart';
+import '../widgets/modern_floating_action_button.dart';
 import '../screens/premium_insights_screen.dart';
 
 class InsightsListingScreen extends StatefulWidget {
@@ -196,6 +197,7 @@ class _InsightsListingScreenState extends State<InsightsListingScreen>
           ],
         ),
       ),
+      floatingActionButton: const ModernFloatingActionButton(),
     );
   }
 
