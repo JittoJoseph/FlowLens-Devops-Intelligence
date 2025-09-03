@@ -395,15 +395,15 @@ class _RepositoriesScreenState extends State<RepositoriesScreen>
                   ),
                   const SizedBox(width: 8),
                   _buildStatChip(
-                    Icons.star_outline,
-                    '${repository.stars}',
-                    AppTheme.accentColor,
+                    Icons.check_circle_outline,
+                    '${repository.mergedPRs} Merged',
+                    AppTheme.successColor,
                   ),
                   const SizedBox(width: 8),
                   _buildStatChip(
-                    Icons.fork_right_outlined,
-                    '${repository.forks}',
-                    AppTheme.secondaryColor,
+                    Icons.star_outline,
+                    '${repository.stars}',
+                    AppTheme.accentColor,
                   ),
                   const Spacer(),
                   if (repository.languages.isNotEmpty)
@@ -427,6 +427,41 @@ class _RepositoriesScreenState extends State<RepositoriesScreen>
                     ),
                 ],
               ),
+
+              // Second stats row for additional info
+              if (repository.closedPRs > 0 ||
+                  repository.draftPRs > 0 ||
+                  repository.forks > 0) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    if (repository.closedPRs > 0) ...[
+                      _buildStatChip(
+                        Icons.close_outlined,
+                        '${repository.closedPRs} Closed',
+                        AppTheme.textSecondaryColor,
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    if (repository.draftPRs > 0) ...[
+                      _buildStatChip(
+                        Icons.edit_outlined,
+                        '${repository.draftPRs} Draft',
+                        AppTheme.warningColor,
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    if (repository.forks > 0) ...[
+                      _buildStatChip(
+                        Icons.fork_right_outlined,
+                        '${repository.forks}',
+                        AppTheme.secondaryColor,
+                      ),
+                    ],
+                    const Spacer(),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
