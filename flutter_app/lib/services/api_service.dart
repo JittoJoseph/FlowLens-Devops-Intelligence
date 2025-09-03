@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../models/repository.dart';
 import '../models/pull_request.dart';
 import '../models/ai_insight.dart';
+import '../models/pipeline_run.dart';
 
 class ApiService {
   static const String _baseUrl = 'https://flowlens-api-service.onrender.com';
@@ -226,7 +227,7 @@ class ApiService {
   }
 
   // Get pipeline runs for a repository
-  static Future<List<dynamic>> getPipelines({String? repositoryId}) async {
+  static Future<List<PipelineRun>> getPipelines({String? repositoryId}) async {
     try {
       String url = '$_baseUrl/api/pipelines';
       if (repositoryId != null) {
@@ -236,7 +237,8 @@ class ApiService {
       final response = await http.get(Uri.parse(url), headers: _headers);
 
       if (response.statusCode == 200) {
-        return json.decode(response.body);
+        final List<dynamic> data = json.decode(response.body);
+        return data.map((json) => PipelineRun.fromApiJson(json)).toList();
       } else {
         throw HttpException('Failed to load pipelines: ${response.statusCode}');
       }
