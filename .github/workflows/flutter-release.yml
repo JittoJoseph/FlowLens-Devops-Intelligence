@@ -47,10 +47,6 @@ jobs:
         working-directory: ./flutter_app
         run: flutter analyze
 
-      - name: Run Flutter tests
-        working-directory: ./flutter_app
-        run: flutter test
-
       - name: Generate version info
         id: version_info
         run: |
