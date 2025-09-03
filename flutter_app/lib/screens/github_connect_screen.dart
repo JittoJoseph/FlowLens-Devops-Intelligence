@@ -89,162 +89,187 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
             builder: (context, gitHubProvider, child) {
               return Padding(
                 padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  children: [
-                    const Spacer(),
-
-                    // Header Section
-                    FadeTransition(
-                      opacity: _contentAnimation,
+                child: SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight:
+                          MediaQuery.of(context).size.height -
+                          MediaQuery.of(context).padding.top -
+                          MediaQuery.of(context).padding.bottom -
+                          48, // Account for padding
+                    ),
+                    child: IntrinsicHeight(
                       child: Column(
                         children: [
-                          // Premium Icon Container
-                          Container(
-                            width: 100,
-                            height: 100,
-                            decoration: BoxDecoration(
-                              color: AppTheme.cardColor,
-                              borderRadius: BorderRadius.circular(25),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: AppTheme.primaryColor.withValues(
-                                    alpha: 0.15,
+                          const Spacer(),
+
+                          // Header Section
+                          FadeTransition(
+                            opacity: _contentAnimation,
+                            child: Column(
+                              children: [
+                                // Premium Icon Container
+                                Container(
+                                  width: 100,
+                                  height: 100,
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.cardColor,
+                                    borderRadius: BorderRadius.circular(25),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: AppTheme.primaryColor.withValues(
+                                          alpha: 0.15,
+                                        ),
+                                        blurRadius: 24,
+                                        offset: const Offset(0, 8),
+                                      ),
+                                    ],
                                   ),
-                                  blurRadius: 24,
-                                  offset: const Offset(0, 8),
+                                  child: const Icon(
+                                    Icons.code_outlined,
+                                    size: 50,
+                                    color: AppTheme.primaryColor,
+                                  ),
+                                ),
+
+                                const SizedBox(height: 32),
+
+                                Text(
+                                  'Connect to GitHub',
+                                  style: AppTheme.premiumHeadingStyle,
+                                  textAlign: TextAlign.center,
+                                ),
+
+                                const SizedBox(height: 16),
+
+                                Text(
+                                  'Access your repositories and enable\nreal-time DevOps insights',
+                                  style: AppTheme.premiumSubheadingStyle,
+                                  textAlign: TextAlign.center,
                                 ),
                               ],
                             ),
-                            child: const Icon(
-                              Icons.code_outlined,
-                              size: 50,
-                              color: AppTheme.primaryColor,
+                          ),
+
+                          const Spacer(),
+
+                          // Features List
+                          FadeTransition(
+                            opacity: _contentAnimation,
+                            child: Container(
+                              decoration: AppTheme.premiumCardDecoration,
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                children: [
+                                  _buildFeatureItem(
+                                    Icons.analytics_outlined,
+                                    'AI-Powered Analysis',
+                                    'Get intelligent insights on your pull requests',
+                                  ),
+                                  const SizedBox(height: 20),
+                                  _buildFeatureItem(
+                                    Icons.timeline_outlined,
+                                    'Real-time Tracking',
+                                    'Monitor your DevOps workflow in real-time',
+                                  ),
+                                  const SizedBox(height: 20),
+                                  _buildFeatureItem(
+                                    Icons.security_outlined,
+                                    'Risk Assessment',
+                                    'Automatic risk evaluation for every change',
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
 
-                          const SizedBox(height: 32),
+                          const Spacer(),
 
-                          Text(
-                            'Connect to GitHub',
-                            style: AppTheme.premiumHeadingStyle,
-                            textAlign: TextAlign.center,
+                          // Connect Button
+                          AnimatedBuilder(
+                            animation: _buttonAnimation,
+                            builder: (context, child) {
+                              return Transform.scale(
+                                scale: _buttonAnimation.value,
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  height: 56,
+                                  child: gitHubProvider.isConnecting
+                                      ? _buildLoadingButton()
+                                      : _buildConnectButton(
+                                          context,
+                                          gitHubProvider,
+                                        ),
+                                ),
+                              );
+                            },
                           ),
 
-                          const SizedBox(height: 16),
+                          // Health status indicator
+                          if (!_checkingHealth) ...[
+                            const SizedBox(height: 12),
+                            _buildHealthStatusIndicator(),
+                          ],
 
-                          Text(
-                            'Access your repositories and enable\nreal-time DevOps insights',
-                            style: AppTheme.premiumSubheadingStyle,
-                            textAlign: TextAlign.center,
+                          if (gitHubProvider.hasError) ...[
+                            const SizedBox(height: 16),
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: AppTheme.errorColor.withValues(
+                                  alpha: 0.1,
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: AppTheme.errorColor.withValues(
+                                    alpha: 0.2,
+                                  ),
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.error_outline,
+                                    color: AppTheme.errorColor,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      gitHubProvider.errorMessage ??
+                                          'Connection failed',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                            color: AppTheme.errorColor,
+                                          ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+
+                          const SizedBox(height: 40),
+
+                          // Footer Note
+                          FadeTransition(
+                            opacity: _contentAnimation,
+                            child: Text(
+                              'Demo Mode: No authentication required',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: AppTheme.textHintColor,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                              textAlign: TextAlign.center,
+                            ),
                           ),
                         ],
                       ),
                     ),
-
-                    const Spacer(),
-
-                    // Features List
-                    FadeTransition(
-                      opacity: _contentAnimation,
-                      child: Container(
-                        decoration: AppTheme.premiumCardDecoration,
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          children: [
-                            _buildFeatureItem(
-                              Icons.analytics_outlined,
-                              'AI-Powered Analysis',
-                              'Get intelligent insights on your pull requests',
-                            ),
-                            const SizedBox(height: 20),
-                            _buildFeatureItem(
-                              Icons.timeline_outlined,
-                              'Real-time Tracking',
-                              'Monitor your DevOps workflow in real-time',
-                            ),
-                            const SizedBox(height: 20),
-                            _buildFeatureItem(
-                              Icons.security_outlined,
-                              'Risk Assessment',
-                              'Automatic risk evaluation for every change',
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    const Spacer(),
-
-                    // Connect Button
-                    AnimatedBuilder(
-                      animation: _buttonAnimation,
-                      builder: (context, child) {
-                        return Transform.scale(
-                          scale: _buttonAnimation.value,
-                          child: SizedBox(
-                            width: double.infinity,
-                            height: 56,
-                            child: gitHubProvider.isConnecting
-                                ? _buildLoadingButton()
-                                : _buildConnectButton(context, gitHubProvider),
-                          ),
-                        );
-                      },
-                    ),
-
-                    // Health status indicator
-                    if (!_checkingHealth) ...[
-                      const SizedBox(height: 12),
-                      _buildHealthStatusIndicator(),
-                    ],
-
-                    if (gitHubProvider.hasError) ...[
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: AppTheme.errorColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: AppTheme.errorColor.withValues(alpha: 0.2),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.error_outline,
-                              color: AppTheme.errorColor,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                gitHubProvider.errorMessage ??
-                                    'Connection failed',
-                                style: Theme.of(context).textTheme.bodyMedium
-                                    ?.copyWith(color: AppTheme.errorColor),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-
-                    const SizedBox(height: 40),
-
-                    // Footer Note
-                    FadeTransition(
-                      opacity: _contentAnimation,
-                      child: Text(
-                        'Demo Mode: No authentication required',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppTheme.textHintColor,
-                          fontStyle: FontStyle.italic,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               );
             },

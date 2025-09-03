@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 class WebSocketService {
@@ -54,10 +55,15 @@ class WebSocketService {
         state: data['state'] as String,
       );
 
+      // Debug logging to track state updates
+      debugPrint(
+        '🔄 WebSocket PR Update: PR #${update.prNumber} -> ${update.state}',
+      );
+
       _prStateController.add(update);
     } catch (e) {
       // Error parsing WebSocket message - log in debug mode
-      // print('WebSocket parse error: $e');
+      debugPrint('❌ WebSocket parse error: $e');
     }
   }
 

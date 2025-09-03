@@ -20,7 +20,7 @@ class ApiService {
   // Debug logging helper
   static void _debugLog(String message) {
     if (kDebugMode) {
-      print('[ApiService] $message');
+      debugPrint('[ApiService] $message');
     }
   }
 

@@ -10,6 +10,56 @@ enum PRStatus {
   closed,
 }
 
+extension PRStatusPriority on PRStatus {
+  /// Priority level for PR status (higher number = higher priority)
+  /// Matches API service priority: opened < building < buildPassed/Failed < approved < merged/closed
+  int get priority {
+    switch (this) {
+      case PRStatus.pending: // maps to 'opened' in API
+        return 1;
+      case PRStatus.building:
+        return 2;
+      case PRStatus.buildPassed:
+        return 3;
+      case PRStatus.buildFailed:
+        return 3; // Same priority as buildPassed
+      case PRStatus.approved:
+        return 4;
+      case PRStatus.merged:
+        return 5;
+      case PRStatus.closed:
+        return 5; // Same priority as merged (final states)
+    }
+  }
+
+  /// Determines if this status should override another status based on priority
+  bool shouldOverride(PRStatus other) {
+    // Never override with the same status (prevent duplicates)
+    if (this == other) return false;
+
+    // Final states (merged/closed) should never be overridden
+    if (other == PRStatus.merged || other == PRStatus.closed) {
+      return this == PRStatus.merged || this == PRStatus.closed;
+    }
+
+    // Approved state should only be overridden by final states
+    if (other == PRStatus.approved) {
+      return priority >= other.priority;
+    }
+
+    // Build completed states should NOT be overridden by building (prevents messy data)
+    if (other == PRStatus.buildPassed || other == PRStatus.buildFailed) {
+      // Don't allow building to override completed builds (prevents backwards progression)
+      if (this == PRStatus.building) return false;
+      // Only allow higher priority states (approved, merged, closed)
+      return priority > other.priority;
+    }
+
+    // For other cases, use simple priority comparison
+    return priority >= other.priority;
+  }
+}
+
 @immutable
 class PullRequest {
   final String? id; // UUID from API
@@ -136,8 +186,8 @@ class PullRequest {
 
   // Factory constructor for API response format
   factory PullRequest.fromApiJson(Map<String, dynamic> json) {
-    // Convert API state to our PRStatus enum
-    PRStatus convertState(String state) {
+    // Helper function to convert individual state values
+    PRStatus convertStateValue(String state) {
       switch (state.toLowerCase()) {
         case 'open':
         case 'opened':
@@ -159,19 +209,97 @@ class PullRequest {
       }
     }
 
+    // Sophisticated status determination with priority-based logic
+    PRStatus determineStatus(
+      String basicState,
+      List<dynamic>? history,
+      bool merged,
+    ) {
+      // If merged, that's the final status
+      if (merged || basicState.toLowerCase() == 'merged') {
+        return PRStatus.merged;
+      }
+
+      // If closed but not merged
+      if (basicState.toLowerCase() == 'closed') {
+        return PRStatus.closed;
+      }
+
+      // Extract latest meaningful status from history
+      String? latestMeaningfulState;
+      if (history != null && history.isNotEmpty) {
+        // Find the most recent non-open state
+        for (int i = history.length - 1; i >= 0; i--) {
+          final event = history[i];
+          if (event is Map<String, dynamic>) {
+            final stateName = event['state_name'] as String?;
+            if (stateName != null &&
+                stateName != 'open' &&
+                stateName != 'opened') {
+              latestMeaningfulState = stateName;
+              break;
+            }
+          }
+        }
+      }
+
+      // Priority-based status determination logic:
+      // 1. merged/closed (already handled above)
+      // 2. approved
+      // 3. buildPassed/buildFailed/building
+      // 4. opened/pending
+
+      if (latestMeaningfulState != null) {
+        // Check for approval states first (higher priority)
+        if (latestMeaningfulState == 'approved') {
+          return PRStatus.approved;
+        }
+
+        // Then check for build states
+        if (latestMeaningfulState == 'buildPassed') {
+          return PRStatus.buildPassed;
+        }
+        if (latestMeaningfulState == 'buildFailed') {
+          return PRStatus.buildFailed;
+        }
+        if (latestMeaningfulState == 'building') {
+          return PRStatus.building;
+        }
+      }
+
+      // Fallback to basic state conversion
+      return convertStateValue(basicState);
+    }
+
     return PullRequest(
       id: json['id'] as String?,
-      repositoryId: json['repo_id'] as String?,
-      number: json['pr_number'] as int,
+      repositoryId:
+          json['repositoryId'] as String? ?? json['repo_id'] as String?,
+      number: json['number'] as int? ?? json['pr_number'] as int,
       title: json['title'] as String,
       description: json['description'] as String? ?? '',
       author: json['author'] as String,
-      authorAvatar: json['author_avatar'] as String? ?? '',
-      commitSha: json['commit_sha'] as String? ?? '',
-      repositoryName: '', // Will need to be populated from repository data
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
-      status: convertState(json['state'] as String? ?? 'pending'),
+      authorAvatar:
+          json['authorAvatar'] as String? ??
+          json['author_avatar'] as String? ??
+          '',
+      commitSha:
+          json['commitSha'] as String? ?? json['commit_sha'] as String? ?? '',
+      repositoryName:
+          json['repositoryName'] as String? ??
+          json['repository_name'] as String? ??
+          '',
+      createdAt: DateTime.parse(
+        json['createdAt'] as String? ?? json['created_at'] as String,
+      ),
+      updatedAt: DateTime.parse(
+        json['updatedAt'] as String? ?? json['updated_at'] as String,
+      ),
+      status: determineStatus(
+        json['status'] as String? ?? json['state'] as String? ?? 'pending',
+        json['history'] as List<dynamic>?,
+        json['merged'] as bool? ?? false,
+      ),
       filesChanged: json['changed_files'] != null
           ? [
               for (int i = 0; i < (json['changed_files'] as int); i++)
@@ -180,8 +308,9 @@ class PullRequest {
           : [], // Generate placeholder file names based on count
       additions: json['additions'] as int? ?? 0,
       deletions: json['deletions'] as int? ?? 0,
-      branchName: json['branch_name'] as String? ?? '',
-      isDraft: json['is_draft'] as bool? ?? false,
+      branchName:
+          json['branchName'] as String? ?? json['branch_name'] as String? ?? '',
+      isDraft: json['isDraft'] as bool? ?? json['is_draft'] as bool? ?? false,
     );
   }
 
