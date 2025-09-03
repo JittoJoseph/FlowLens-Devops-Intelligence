@@ -26,6 +26,6 @@ class AppSettings(BaseSettings):
     GEMINI_API_KEY: str
     GEMINI_AI_MODEL: str = "gemini-2.5-flash"
     AI_TEMP: float = 0.5
-    AI_MAX_TOKEN: int = 1024
+    AI_MAX_TOKEN: int = 2048  # Increased from 1024 to handle larger responses
 
 settings = AppSettings()

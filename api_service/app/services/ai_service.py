@@ -59,31 +59,55 @@ def _clean_json_response(raw_response: str) -> str:
     return response
 
 
-def _format_files_changed(files_changed: list) -> str:
-    """Formats the files_changed JSON data into a readable string for the AI prompt."""
+def _format_files_changed(files_changed: list, max_total_length: int = 4000) -> str:
+    """
+    Formats the files_changed JSON data into a readable string for the AI prompt.
+    Includes intelligent truncation to stay within token limits.
+    """
     if not files_changed:
         return "No files changed"
     
     formatted_files = []
-    for file_data in files_changed:
+    current_length = 0
+    
+    for i, file_data in enumerate(files_changed):
         filename = file_data.get('filename', 'unknown')
         status = file_data.get('status', 'unknown')
         additions = file_data.get('additions', 0)
         deletions = file_data.get('deletions', 0)
         changes = file_data.get('changes', 0)
         
-        # Include patch data if available (truncated for brevity)
-        patch = file_data.get('patch', '')
-        if patch and len(patch) > 500:
-            patch = patch[:500] + "... [truncated]"
-        
+        # Start with basic file info
         file_summary = f"- {filename} ({status}): +{additions}/-{deletions} ({changes} changes)"
+        
+        # Include patch data if available and within limits
+        patch = file_data.get('patch', '')
         if patch:
-            file_summary += f"\n  Patch preview: {patch[:200]}..."
+            # Determine how much patch to include based on remaining space
+            remaining_space = max_total_length - current_length - len(file_summary)
+            
+            if remaining_space > 200:  # Only include patch if we have decent space
+                patch_preview_length = min(len(patch), remaining_space - 50, 500)
+                patch_preview = patch[:patch_preview_length]
+                if len(patch) > patch_preview_length:
+                    patch_preview += "... [truncated]"
+                file_summary += f"\n  Patch preview: {patch_preview}"
+            else:
+                file_summary += f"\n  Patch: {len(patch)} characters (truncated for space)"
+        
+        # Check if adding this file would exceed our limit
+        if current_length + len(file_summary) > max_total_length:
+            remaining_files = len(files_changed) - i
+            if remaining_files > 0:
+                formatted_files.append(f"... and {remaining_files} more files (truncated for API limits)")
+            break
         
         formatted_files.append(file_summary)
+        current_length += len(file_summary)
     
-    return "\n".join(formatted_files)
+    result = "\n".join(formatted_files)
+    logger.debug(f"Formatted files_changed: {len(result)} characters from {len(files_changed)} files")
+    return result
 
 
 async def get_ai_insights(pr_data: dict) -> dict | None:
@@ -91,45 +115,58 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
     Generates AI insights for a PR using Gemini with enhanced files_changed analysis.
     Expects `pr_data` to have keys like: title, author, branch_name, files_changed, etc.
     Returns clean JSON with risk_level, summary, recommendation fields.
+    Enhanced with better error handling and data size management.
     """
     if not MODEL_NAME or not PROMPT_TEMPLATE:
         logger.error("AI service is not configured. Cannot get insights.")
         return None
 
-    # Extract and format files_changed data from the new schema
-    files_changed = pr_data.get("files_changed", [])
-    
-    # Handle case where files_changed might be a JSON string
-    if isinstance(files_changed, str):
-        try:
-            files_changed = json.loads(files_changed)
-        except json.JSONDecodeError:
-            logger.warning("Invalid JSON in files_changed data")
-            return None
-    
-    if not files_changed:
-        logger.warning("No files_changed data available for AI analysis")
-        return None
-    
-    formatted_files = _format_files_changed(files_changed)
-    
-    # Build enhanced prompt with actual file change data
-    prompt = PROMPT_TEMPLATE.format(
-        author=pr_data.get("author", "N/A"),
-        branch_name=pr_data.get("branch_name", "N/A"),
-        commit_message=pr_data.get("title", "N/A"),
-        files_changed=formatted_files
-    )
-
     pr_number = pr_data.get('pr_number')
     repo_id = pr_data.get('repo_id')
-    logger.info(f"Requesting AI insight for PR #{pr_number} in repository {repo_id}")
-
+    
     try:
+        # Extract and format files_changed data from the new schema
+        files_changed = pr_data.get("files_changed", [])
+        
+        # Handle case where files_changed might be a JSON string
+        if isinstance(files_changed, str):
+            try:
+                files_changed = json.loads(files_changed)
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON in files_changed data for PR #{pr_number}")
+                return None
+        
+        if not files_changed:
+            logger.warning(f"No files_changed data available for AI analysis of PR #{pr_number}")
+            return None
+        
+        # Calculate total patch size for logging
+        total_patch_size = sum(len(f.get('patch', '')) for f in files_changed)
+        logger.info(f"PR #{pr_number}: Processing {len(files_changed)} files, total patch size: {total_patch_size} chars")
+        
+        # Format files with intelligent truncation
+        formatted_files = _format_files_changed(files_changed, max_total_length=4000)
+        
+        # Build enhanced prompt with actual file change data
+        prompt = PROMPT_TEMPLATE.format(
+            author=pr_data.get("author", "N/A"),
+            branch_name=pr_data.get("branch_name", "N/A"),
+            commit_message=pr_data.get("title", "N/A"),
+            files_changed=formatted_files
+        )
+
+        # Check prompt size
+        prompt_length = len(prompt)
+        if prompt_length > 6000:
+            logger.warning(f"Large prompt for PR #{pr_number}: {prompt_length} characters")
+        
+        logger.info(f"Requesting AI insight for PR #{pr_number} in repository {repo_id}")
+
         generation_config = types.GenerateContentConfig(
             temperature=settings.AI_TEMP,
             max_output_tokens=settings.AI_MAX_TOKEN,
         )
+        
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=[{"role": "user", "parts": [{"text": prompt}]}],
@@ -140,25 +177,66 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
         
         # Extract the text from the response using the correct structure
         raw_response = None
+        
+        # Check for finish_reason to understand why response might be incomplete
         if hasattr(response, 'candidates') and response.candidates:
             candidate = response.candidates[0]
-            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts') and candidate.content.parts:
-                raw_response = candidate.content.parts[0].text
-                logger.info(f"Extracted text from response: {raw_response[:200]}...")
-            else:
-                logger.warning(f"Gemini response missing content/parts structure for PR #{pr_number}.")
-                return None
-        elif hasattr(response, 'text') and response.text:
-            # Fallback for older API structure
+            finish_reason = getattr(candidate, 'finish_reason', None)
+            if finish_reason and str(finish_reason) == 'MAX_TOKENS':
+                logger.warning(f"Gemini response truncated due to MAX_TOKENS limit for PR #{pr_number}")
+                # We'll still try to extract partial content below
+        
+        logger.debug(f"Response has text attribute: {hasattr(response, 'text')}")
+        if hasattr(response, 'text'):
+            response_text = response.text
+            logger.debug(f"Response.text type: {type(response_text)}, value: {response_text}")
+        
+        # Method 1: Try response.text (direct access)
+        if hasattr(response, 'text') and response.text:
             raw_response = response.text
-            logger.info(f"Using fallback response.text: {raw_response[:200]}...")
-        else:
-            logger.warning(f"Gemini returned an empty or invalid response for PR #{pr_number}.")
-            return None
+            logger.info(f"Extracted text via response.text: {raw_response[:200]}...")
+        # Method 2: Try candidates[0].content.parts[0].text
+        elif hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            logger.debug(f"Candidate: {candidate}")
+            if hasattr(candidate, 'content') and candidate.content and hasattr(candidate.content, 'parts') and candidate.content.parts:
+                part = candidate.content.parts[0]
+                logger.debug(f"Part: {part}")
+                if hasattr(part, 'text') and part.text:
+                    raw_response = part.text
+                    logger.info(f"Extracted text via candidates path: {raw_response[:200]}...")
+                else:
+                    logger.debug(f"Part has no text or empty text. Part attributes: {[attr for attr in dir(part) if not attr.startswith('_')]}")
+            else:
+                logger.debug(f"Candidate structure issue. Content: {getattr(candidate, 'content', None)}")
         
         if not raw_response:
             logger.warning(f"No text content found in Gemini response for PR #{pr_number}.")
-            return None
+            # Try to access the text property directly
+            try:
+                text_prop = getattr(response, 'text', None)
+                logger.debug(f"Direct text property: {text_prop}")
+                if text_prop:
+                    raw_response = text_prop
+                    logger.info(f"Got text via direct property access: {raw_response[:200]}...")
+            except Exception as e:
+                logger.debug(f"Failed to access text property: {e}")
+            
+            if not raw_response:
+                # Check if this was a MAX_TOKENS issue and return a fallback
+                if hasattr(response, 'candidates') and response.candidates:
+                    candidate = response.candidates[0]
+                    finish_reason = getattr(candidate, 'finish_reason', None)
+                    if finish_reason and str(finish_reason) == 'MAX_TOKENS':
+                        logger.warning(f"Returning fallback insight due to MAX_TOKENS limit for PR #{pr_number}")
+                        return {
+                            "risk_level": "medium",
+                            "summary": "Complex changes detected that require careful review due to analysis limitations.",
+                            "recommendation": "Review this PR carefully as the AI analysis was truncated. Consider breaking down large changes into smaller PRs."
+                        }
+                
+                logger.debug(f"Response structure: {dir(response)}")
+                return None
         
         cleaned_response = _clean_json_response(raw_response)
         
@@ -177,6 +255,12 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
             if cleaned_insight['risk_level'] not in ['low', 'medium', 'high']:
                 cleaned_insight['risk_level'] = 'low'
             
+            # Ensure summary and recommendation are not too long
+            if len(cleaned_insight['summary']) > 500:
+                cleaned_insight['summary'] = cleaned_insight['summary'][:497] + "..."
+            if len(cleaned_insight['recommendation']) > 1000:
+                cleaned_insight['recommendation'] = cleaned_insight['recommendation'][:997] + "..."
+            
             logger.success(f"Successfully generated AI insight for PR #{pr_number}")
             return cleaned_insight
             
@@ -192,5 +276,5 @@ async def get_ai_insights(pr_data: dict) -> dict | None:
             return None
 
     except Exception as e:
-        logger.error(f"Unexpected error with Gemini API for PR #{pr_data['pr_number']}: {str(e)}")
+        logger.error(f"Unexpected error with Gemini API for PR #{pr_data.get('pr_number', 'unknown')}: {str(e)}")
         return None
