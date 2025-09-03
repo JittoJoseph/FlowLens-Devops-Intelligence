@@ -635,7 +635,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             Expanded(
               child: _buildStatCard(
                 'Active PRs',
-                '${prProvider.pullRequests.where((pr) => pr.status == PRStatus.pending || pr.status == PRStatus.building).length}',
+                '${prProvider.pullRequests.where((pr) => pr.status != PRStatus.merged && pr.status != PRStatus.closed).length}',
                 Icons.pending_actions_outlined,
                 AppTheme.primaryColor,
                 0,
