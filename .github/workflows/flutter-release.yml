@@ -8,7 +8,7 @@ on:
     types: [closed]
 
 env:
-  FLUTTER_VERSION: "3.24.3"
+  FLUTTER_VERSION: "3.35.2"
   JAVA_VERSION: "17"
 
 jobs:
@@ -36,6 +36,9 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: "stable"
           cache: true
+
+      - name: Disable Flutter analytics
+        run: flutter config --no-analytics
 
       - name: Get Flutter dependencies
         working-directory: ./flutter_app
@@ -180,6 +183,9 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: "stable"
           cache: true
+
+      - name: Disable Flutter analytics
+        run: flutter config --no-analytics
 
       - name: Get Flutter dependencies
         working-directory: ./flutter_app
