@@ -98,69 +98,88 @@ class PipelineRun {
   }
 
   /// Returns a cleaned and properly ordered list of pipeline events
-  /// This method removes duplicates, orders chronologically, and ensures logical flow
   List<PipelineHistoryEvent> get cleanedHistory {
     if (history.isEmpty) return [];
 
-    // First, sort all events by timestamp
     final sortedEvents = List<PipelineHistoryEvent>.from(history);
     sortedEvents.sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-    final cleanedEvents = <PipelineHistoryEvent>[];
-    final seenStates = <String, String>{}; // field -> latest value
+    final stateProgression = <PipelineHistoryEvent>[];
+    String? lastOverallState;
 
-    // Process events to remove unnecessary duplicates and create logical flow
-    for (final event in sortedEvents) {
-      final key = event.field;
-      final lastValue = seenStates[key];
-
-      // Skip if we've already seen this exact state transition
-      if (lastValue == event.value) continue;
-
-      // For build events, ensure logical sequence
-      if (key == 'status_build') {
-        // If we're going from building to buildPassed, keep both
-        // If we're seeing buildPassed after buildPassed, skip
-        if (event.value == 'buildPassed' && lastValue == 'buildPassed') {
-          continue;
-        }
-
-        // If we see building after buildPassed, it's a new build cycle
-        if (event.value == 'building' && lastValue == 'buildPassed') {
-          // This is a new build, keep it
-        }
-      }
-
-      cleanedEvents.add(event);
-      seenStates[key] = event.value;
-    }
-
-    // Ensure we have a logical minimum set of events
-    final finalEvents = <PipelineHistoryEvent>[];
-
-    // Add PR opened event if not present (infer from creation)
-    if (!cleanedEvents.any(
+    // Add PR opened event if not present
+    if (!sortedEvents.any(
       (e) => e.field == 'status_pr' && e.value == 'opened',
     )) {
-      finalEvents.add(
+      stateProgression.add(
         PipelineHistoryEvent(
           timestamp: createdAt,
-          field: 'status_pr',
+          field: 'overall_state',
           value: 'opened',
           meta: {'inferred': true},
         ),
       );
+      lastOverallState = 'opened';
     }
 
-    // Add the cleaned events
-    finalEvents.addAll(cleanedEvents);
+    for (final event in sortedEvents) {
+      final overallState = _getOverallStateFromEvent(event);
 
-    // Remove any trailing duplicate states and limit to recent events
-    final recentEvents = finalEvents.length > 6
-        ? finalEvents.sublist(finalEvents.length - 6)
-        : finalEvents;
+      // Skip duplicates and backwards progressions
+      if (overallState == lastOverallState ||
+          _isBackwardsProgression(lastOverallState, overallState)) {
+        continue;
+      }
 
-    return recentEvents;
+      stateProgression.add(
+        PipelineHistoryEvent(
+          timestamp: event.timestamp,
+          field: 'overall_state',
+          value: overallState,
+          meta: event.meta,
+        ),
+      );
+      lastOverallState = overallState;
+    }
+
+    return stateProgression.length > 8
+        ? stateProgression.sublist(stateProgression.length - 8)
+        : stateProgression;
+  }
+
+  String _getOverallStateFromEvent(PipelineHistoryEvent event) {
+    if (event.field == 'status_pr') return event.value;
+    if (event.field == 'status_build') return event.value;
+    if (event.field == 'status_approval') return event.value;
+    if (event.field == 'status_merge') return event.value;
+    return event.value;
+  }
+
+  bool _isBackwardsProgression(String? fromState, String toState) {
+    if (fromState == null) return false;
+
+    const statePriority = {
+      'opened': 1,
+      'updated': 1,
+      'building': 2,
+      'buildPassed': 3,
+      'buildFailed': 3,
+      'approved': 4,
+      'rejected': 4,
+      'merged': 5,
+      'closed': 5,
+    };
+
+    final fromPriority = statePriority[fromState] ?? 1;
+    final toPriority = statePriority[toState] ?? 1;
+
+    // Don't allow building after buildPassed/Failed (prevents messy data)
+    if ((fromState == 'buildPassed' || fromState == 'buildFailed') &&
+        toState == 'building') {
+      return true;
+    }
+
+    return toPriority < fromPriority;
   }
 }
 
@@ -188,6 +207,10 @@ class PipelineHistoryEvent {
 
   String get displayValue {
     switch (value) {
+      case 'opened':
+        return 'Opened';
+      case 'updated':
+        return 'Updated';
       case 'buildPassed':
         return 'Build Passed';
       case 'buildFailed':
@@ -196,8 +219,12 @@ class PipelineHistoryEvent {
         return 'Building';
       case 'approved':
         return 'Approved';
+      case 'rejected':
+        return 'Rejected';
       case 'merged':
         return 'Merged';
+      case 'closed':
+        return 'Closed';
       case 'pending':
         return 'Pending';
       default:
@@ -206,6 +233,33 @@ class PipelineHistoryEvent {
   }
 
   String get eventDescription {
+    // Handle normalized overall_state events
+    if (field == 'overall_state') {
+      switch (value) {
+        case 'opened':
+          return 'Pull Request Opened';
+        case 'updated':
+          return 'Pull Request Updated';
+        case 'building':
+          return 'Build Started';
+        case 'buildPassed':
+          return 'Build Passed';
+        case 'buildFailed':
+          return 'Build Failed';
+        case 'approved':
+          return 'Code Review Approved';
+        case 'rejected':
+          return 'Changes Requested';
+        case 'merged':
+          return 'Pull Request Merged';
+        case 'closed':
+          return 'Pull Request Closed';
+        default:
+          return 'Status Updated';
+      }
+    }
+
+    // Handle field-specific events
     switch (field) {
       case 'status_build':
         switch (value) {
