@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/premium_theme.dart';
@@ -22,6 +23,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   late AnimationController _animationController;
   String _searchQuery = '';
   PRStatus? _statusFilter;
+  StreamSubscription? _newPRSubscription;
 
   @override
   void initState() {
@@ -35,6 +37,41 @@ class _DashboardScreenState extends State<DashboardScreen>
     // Load data after the frame is built to avoid setState during build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadData();
+      _setupNewPRListener();
+    });
+  }
+
+  void _setupNewPRListener() {
+    final prProvider = Provider.of<PRProvider>(context, listen: false);
+    _newPRSubscription = prProvider.newPRStream.listen((newPR) {
+      // Show a subtle notification when a new PR is automatically added
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.new_releases, color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'New PR #${newPR.number}: ${newPR.title}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: AppTheme.primaryColor,
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
     });
   }
 
@@ -55,6 +92,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   @override
   void dispose() {
+    _newPRSubscription?.cancel();
     _animationController.dispose();
     super.dispose();
   }
@@ -120,6 +158,41 @@ class _DashboardScreenState extends State<DashboardScreen>
           },
         ),
         actions: [
+          // Background fetching indicator
+          Consumer<PRProvider>(
+            builder: (context, prProvider, child) {
+              if (prProvider.isFetchingNewPR) {
+                return Container(
+                  padding: const EdgeInsets.all(8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            AppTheme.primaryColor.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'New PR',
+                        style: AppTheme.premiumBodyStyle.copyWith(
+                          fontSize: 12,
+                          color: AppTheme.primaryColor,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
           IconButton(
             onPressed: _loadData,
             icon: Icon(Icons.refresh, color: AppTheme.primaryColor),
