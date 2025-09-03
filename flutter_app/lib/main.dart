@@ -6,6 +6,7 @@ import 'providers/github_provider.dart';
 import 'providers/pr_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/github_connect_screen.dart';
+import 'screens/repositories_screen.dart';
 import 'screens/minimalist_dashboard.dart';
 import 'screens/pr_details_screen.dart';
 
@@ -36,6 +37,7 @@ class FlowLensApp extends StatelessWidget {
             routes: {
               '/': (context) => const SplashScreen(),
               '/connect': (context) => const GitHubConnectScreen(),
+              '/repositories': (context) => const RepositoriesScreen(),
               '/dashboard': (context) => const DashboardScreen(),
               '/pr-details': (context) => const PRDetailsScreen(),
             },
