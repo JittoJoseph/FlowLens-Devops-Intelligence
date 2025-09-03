@@ -14,14 +14,9 @@ class InsightsListingScreen extends StatefulWidget {
   State<InsightsListingScreen> createState() => _InsightsListingScreenState();
 }
 
-class _InsightsListingScreenState extends State<InsightsListingScreen>
-    with TickerProviderStateMixin {
-  late AnimationController _fadeController;
-  late AnimationController _slideController;
-  late Animation<double> _fadeAnimation;
-  late Animation<Offset> _slideAnimation;
-
+class _InsightsListingScreenState extends State<InsightsListingScreen> {
   List<InsightGroup> _insightGroups = [];
+  List<InsightGroup> _filteredGroups = [];
   bool _isLoading = true;
   String? _errorMessage;
   String _searchQuery = '';
@@ -30,35 +25,7 @@ class _InsightsListingScreenState extends State<InsightsListingScreen>
   @override
   void initState() {
     super.initState();
-
-    _fadeController = AnimationController(
-      duration: const Duration(milliseconds: 800),
-      vsync: this,
-    );
-
-    _slideController = AnimationController(
-      duration: const Duration(milliseconds: 1000),
-      vsync: this,
-    );
-
-    _fadeAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _fadeController, curve: Curves.easeOut));
-
-    _slideAnimation =
-        Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(
-          CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
-        );
-
     _loadInsights();
-  }
-
-  @override
-  void dispose() {
-    _fadeController.dispose();
-    _slideController.dispose();
-    super.dispose();
   }
 
   Future<void> _loadInsights() async {
@@ -69,51 +36,12 @@ class _InsightsListingScreenState extends State<InsightsListingScreen>
       });
 
       final insights = await ApiService.getInsights();
-
-      // Filter out any insights with invalid data
-      final validInsights = insights
-          .where(
-            (insight) =>
-                insight.id.isNotEmpty &&
-                insight.prNumber > 0 &&
-                insight.summary.isNotEmpty,
-          )
-          .toList();
-
-      // Group insights by PR
-      final Map<String, List<AIInsight>> groupedInsights = {};
-      for (final insight in validInsights) {
-        final key = 'PR#${insight.prNumber}';
-        groupedInsights.putIfAbsent(key, () => []).add(insight);
-      }
-
-      // Create insight groups with metadata
-      _insightGroups = groupedInsights.entries.map((entry) {
-        final insights = entry.value;
-        final firstInsight = insights.first;
-
-        return InsightGroup(
-          prNumber: firstInsight.prNumber,
-          prTitle: 'Pull Request #${firstInsight.prNumber}', // Fallback title
-          insights: insights,
-          createdAt: insights
-              .map((i) => i.createdAt)
-              .reduce((a, b) => a.isAfter(b) ? a : b),
-          highestRiskLevel: insights
-              .map((i) => i.riskLevel)
-              .reduce((a, b) => a.index > b.index ? a : b),
-        );
-      }).toList();
-
-      // Sort by creation date (newest first)
-      _insightGroups.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      _processInsights(insights);
 
       if (mounted) {
         setState(() {
           _isLoading = false;
         });
-        _fadeController.forward();
-        _slideController.forward();
       }
     } catch (error) {
       if (mounted) {
@@ -125,12 +53,63 @@ class _InsightsListingScreenState extends State<InsightsListingScreen>
     }
   }
 
-  List<InsightGroup> get _filteredGroups {
+  // Simplified data processing method
+  void _processInsights(List<AIInsight> insights) {
+    final Map<int, List<AIInsight>> groupedInsights = {};
+
+    // Group insights by PR number
+    for (final insight in insights) {
+      if (insight.id.isNotEmpty &&
+          insight.prNumber > 0 &&
+          insight.summary.isNotEmpty) {
+        groupedInsights.putIfAbsent(insight.prNumber, () => []).add(insight);
+      }
+    }
+
+    // Create insight groups
+    final groups = <InsightGroup>[];
+    for (final entry in groupedInsights.entries) {
+      final prInsights = entry.value;
+      final firstInsight = prInsights.first;
+
+      // Find highest risk and latest date efficiently
+      var highestRisk = RiskLevel.low;
+      var latestDate = prInsights.first.createdAt;
+
+      for (final insight in prInsights) {
+        if (insight.riskLevel.index > highestRisk.index) {
+          highestRisk = insight.riskLevel;
+        }
+        if (insight.createdAt.isAfter(latestDate)) {
+          latestDate = insight.createdAt;
+        }
+      }
+
+      groups.add(
+        InsightGroup(
+          prNumber: firstInsight.prNumber,
+          prTitle: 'Pull Request #${firstInsight.prNumber}',
+          insights: prInsights,
+          createdAt: latestDate,
+          highestRiskLevel: highestRisk,
+        ),
+      );
+    }
+
+    // Sort by creation date (newest first)
+    groups.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    _insightGroups = groups;
+    _applyFilters();
+  }
+
+  // Simple filtering method
+  void _applyFilters() {
     var filtered = _insightGroups;
 
     if (_searchQuery.isNotEmpty) {
+      final query = _searchQuery.toLowerCase();
       filtered = filtered.where((group) {
-        final query = _searchQuery.toLowerCase();
         return group.prTitle.toLowerCase().contains(query) ||
             group.prNumber.toString().contains(query);
       }).toList();
@@ -142,7 +121,55 @@ class _InsightsListingScreenState extends State<InsightsListingScreen>
       }).toList();
     }
 
-    return filtered;
+    _filteredGroups = filtered;
+  }
+
+  void _updateSearch(String value) {
+    setState(() {
+      _searchQuery = value;
+      _applyFilters();
+    });
+  }
+
+  void _updateRiskFilter(RiskLevel? risk) {
+    setState(() {
+      _riskFilter = _riskFilter == risk ? null : risk;
+      _applyFilters();
+    });
+  }
+
+  void _navigateToInsights(InsightGroup group) {
+    // Create a PullRequest object from the insight data for navigation
+    final firstInsight = group.insights.first;
+
+    final pullRequest = PullRequest(
+      id: 'insight-${group.prNumber}',
+      number: group.prNumber,
+      title: group.prTitle,
+      description:
+          'Pull request with ${group.insights.length} AI insight${group.insights.length > 1 ? 's' : ''}',
+      author: firstInsight.author,
+      authorAvatar: firstInsight.avatarUrl,
+      commitSha: firstInsight.commitSha,
+      repositoryName:
+          'repository', // TODO: Get actual repository name if available
+      createdAt: group.createdAt,
+      updatedAt: group.createdAt,
+      status: PRStatus
+          .pending, // Default status since we don't have this in insights
+      filesChanged: [],
+      additions: 0,
+      deletions: 0,
+      branchName: 'feature-branch',
+      isDraft: false,
+    );
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PremiumInsightsScreen(pullRequest: pullRequest),
+      ),
+    );
   }
 
   @override
@@ -164,26 +191,10 @@ class _InsightsListingScreenState extends State<InsightsListingScreen>
           physics: const BouncingScrollPhysics(),
           slivers: [
             // Header Section
-            SliverToBoxAdapter(
-              child: FadeTransition(
-                opacity: _fadeAnimation,
-                child: SlideTransition(
-                  position: _slideAnimation,
-                  child: _buildHeader(),
-                ),
-              ),
-            ),
+            SliverToBoxAdapter(child: _buildHeader()),
 
             // Search and Filter Section
-            SliverToBoxAdapter(
-              child: FadeTransition(
-                opacity: _fadeAnimation,
-                child: SlideTransition(
-                  position: _slideAnimation,
-                  child: _buildSearchAndFilters(),
-                ),
-              ),
-            ),
+            SliverToBoxAdapter(child: _buildSearchAndFilters()),
 
             // Content
             if (_isLoading)
@@ -376,11 +387,7 @@ class _InsightsListingScreenState extends State<InsightsListingScreen>
             padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: AppTheme.premiumCardDecoration,
             child: TextField(
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                });
-              },
+              onChanged: _updateSearch,
               style: AppTheme.premiumBodyStyle,
               decoration: InputDecoration(
                 hintText: 'Search by PR title or number...',
@@ -425,11 +432,7 @@ class _InsightsListingScreenState extends State<InsightsListingScreen>
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       child: GestureDetector(
-        onTap: () {
-          setState(() {
-            _riskFilter = isSelected ? null : risk;
-          });
-        },
+        onTap: () => _updateRiskFilter(risk),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
@@ -460,22 +463,19 @@ class _InsightsListingScreenState extends State<InsightsListingScreen>
   Widget _buildInsightsList() {
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      sliver: SliverList(
-        delegate: SliverChildBuilderDelegate((context, index) {
+      sliver: SliverList.builder(
+        itemCount: _filteredGroups.length,
+        itemBuilder: (context, index) {
           final group = _filteredGroups[index];
-          return FadeTransition(
-            opacity: _fadeAnimation,
-            child: SlideTransition(
-              position: _slideAnimation,
-              child: Padding(
-                padding: EdgeInsets.only(
-                  bottom: index == _filteredGroups.length - 1 ? 100 : 16,
-                ),
-                child: _buildInsightGroupCard(group),
+          return RepaintBoundary(
+            child: Padding(
+              padding: EdgeInsets.only(
+                bottom: index == _filteredGroups.length - 1 ? 100 : 16,
               ),
+              child: _buildInsightGroupCard(group),
             ),
           );
-        }, childCount: _filteredGroups.length),
+        },
       ),
     );
   }
@@ -484,38 +484,7 @@ class _InsightsListingScreenState extends State<InsightsListingScreen>
     final riskColor = _getRiskColor(group.highestRiskLevel);
 
     return GestureDetector(
-      onTap: () {
-        // Create a mock PullRequest for navigation
-        final mockPR = PullRequest(
-          id: 'mock-${group.prNumber}',
-          number: group.prNumber,
-          title: group.prTitle,
-          description: 'AI-generated insights available for this pull request',
-          author: 'AI System',
-          authorAvatar: '',
-          commitSha: 'abcd1234567890',
-          repositoryName: 'repository',
-          createdAt: DateTime.now().subtract(
-            const Duration(hours: 2),
-          ), // 2 hours ago
-          updatedAt: DateTime.now().subtract(
-            const Duration(minutes: 30),
-          ), // 30 minutes ago
-          status: PRStatus.pending,
-          filesChanged: [],
-          additions: 0,
-          deletions: 0,
-          branchName: 'feature-branch',
-          isDraft: false,
-        );
-
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => PremiumInsightsScreen(pullRequest: mockPR),
-          ),
-        );
-      },
+      onTap: () => _navigateToInsights(group),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         decoration: AppTheme.premiumCardDecoration.copyWith(
@@ -831,11 +800,20 @@ class InsightGroup {
   final DateTime createdAt;
   final RiskLevel highestRiskLevel;
 
-  InsightGroup({
+  const InsightGroup({
     required this.prNumber,
     required this.prTitle,
     required this.insights,
     required this.createdAt,
     required this.highestRiskLevel,
   });
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is InsightGroup && other.prNumber == prNumber;
+  }
+
+  @override
+  int get hashCode => prNumber.hashCode;
 }
