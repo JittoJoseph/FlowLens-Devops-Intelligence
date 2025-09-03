@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/pull_request.dart';
 import '../models/ai_insight.dart';
@@ -8,11 +9,15 @@ class PRProvider extends ChangeNotifier {
   List<PullRequest> _pullRequests = [];
   final Map<int, AIInsight> _insights = {};
   bool _isLoading = false;
+  bool _isFetchingNewPR = false; // New indicator for background fetching
   String? _errorMessage;
   PullRequest? _selectedPR;
   String? _currentRepositoryId;
   bool _isInitialized =
       false; // Flag to prevent notifications during initialization
+
+  // Stream controller for new PR notifications
+  final _newPRController = StreamController<PullRequest>.broadcast();
 
   // WebSocket service
   final WebSocketService _webSocketService = WebSocketService();
@@ -21,9 +26,14 @@ class PRProvider extends ChangeNotifier {
   List<PullRequest> get pullRequests => List.unmodifiable(_pullRequests);
   Map<int, AIInsight> get insights => Map.unmodifiable(_insights);
   bool get isLoading => _isLoading;
+  bool get isFetchingNewPR =>
+      _isFetchingNewPR; // Getter for background fetching indicator
   String? get errorMessage => _errorMessage;
   PullRequest? get selectedPR => _selectedPR;
   String? get currentRepositoryId => _currentRepositoryId;
+
+  // Stream for new PR notifications
+  Stream<PullRequest> get newPRStream => _newPRController.stream;
 
   PRProvider() {
     // Initialize WebSocket after the first frame to avoid notifications during build
@@ -40,7 +50,7 @@ class PRProvider extends ChangeNotifier {
     });
   }
 
-  void _handlePRStateUpdate(PRStateUpdate update) {
+  void _handlePRStateUpdate(PRStateUpdate update) async {
     // Don't notify during initialization to avoid setState during build
     if (!_isInitialized) return;
 
@@ -81,6 +91,68 @@ class PRProvider extends ChangeNotifier {
 
       _pullRequests[prIndex] = updatedPR;
       notifyListeners();
+    } else {
+      // PR not found in current list - this might be a new PR
+      // Only fetch if it's a newly opened PR and we're viewing the same repository
+      if (update.state.toLowerCase() == 'opened' &&
+          (_currentRepositoryId == null ||
+              _currentRepositoryId == update.repositoryId)) {
+        await _fetchNewPR(update.repositoryId, update.prNumber);
+      }
+    }
+  }
+
+  // Fetch a specific new PR and add it to the list
+  Future<void> _fetchNewPR(String repositoryId, int prNumber) async {
+    if (_isFetchingNewPR) return; // Prevent multiple simultaneous fetches
+
+    _isFetchingNewPR = true;
+    notifyListeners(); // Show loading indicator
+
+    try {
+      // First, try to fetch just this specific PR using the insights endpoint
+      // as a way to check if the PR exists and get basic info
+      final insights = await ApiService.getInsightsForPR(
+        prNumber,
+        repositoryId: repositoryId,
+      );
+
+      // If we get insights, fetch the full PR data
+      final allPRs = await ApiService.getPullRequests(
+        repositoryId: repositoryId,
+      );
+
+      // Find the specific PR
+      final newPR = allPRs.where((pr) => pr.number == prNumber).firstOrNull;
+
+      if (newPR == null) {
+        return; // PR not found, might be in a different repository
+      }
+
+      // Check if we already have this PR (double-check)
+      final exists = _pullRequests.any(
+        (pr) => pr.repositoryId == repositoryId && pr.number == prNumber,
+      );
+
+      if (!exists) {
+        // Add the new PR to the beginning of the list for visibility
+        _pullRequests.insert(0, newPR);
+
+        // Add insights if available
+        if (insights.isNotEmpty) {
+          _insights[prNumber] = insights.first;
+        }
+
+        // Emit new PR event for UI notifications
+        _newPRController.add(newPR);
+      }
+    } catch (e) {
+      // Failed to fetch new PR - this is not critical
+      // The user can still refresh manually if needed
+      // In a production app, you might want to log this
+    } finally {
+      _isFetchingNewPR = false;
+      notifyListeners(); // Hide loading indicator and update UI
     }
   }
 
@@ -161,6 +233,7 @@ class PRProvider extends ChangeNotifier {
   @override
   void dispose() {
     _webSocketService.dispose();
+    _newPRController.close();
     super.dispose();
   }
 }

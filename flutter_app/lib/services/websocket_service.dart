@@ -40,6 +40,13 @@ class WebSocketService {
     try {
       final data = json.decode(message as String);
 
+      // Validate required fields
+      if (data['repo_id'] == null ||
+          data['pr_number'] == null ||
+          data['state'] == null) {
+        return;
+      }
+
       // Parse minimal PR state update
       final update = PRStateUpdate(
         repositoryId: data['repo_id'] as String,
@@ -49,7 +56,8 @@ class WebSocketService {
 
       _prStateController.add(update);
     } catch (e) {
-      // Error parsing WebSocket message
+      // Error parsing WebSocket message - log in debug mode
+      // print('WebSocket parse error: $e');
     }
   }
 
