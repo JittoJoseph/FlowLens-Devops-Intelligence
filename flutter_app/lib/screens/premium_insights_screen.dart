@@ -6,8 +6,15 @@ import '../services/api_service.dart';
 
 class PremiumInsightsScreen extends StatefulWidget {
   final PullRequest pullRequest;
+  final List<AIInsight>? preloadedInsights; // Optional pre-loaded insights
+  final RiskLevel? overrideRiskLevel; // Optional risk level override
 
-  const PremiumInsightsScreen({super.key, required this.pullRequest});
+  const PremiumInsightsScreen({
+    super.key,
+    required this.pullRequest,
+    this.preloadedInsights,
+    this.overrideRiskLevel,
+  });
 
   @override
   State<PremiumInsightsScreen> createState() => _PremiumInsightsScreenState();
@@ -61,6 +68,18 @@ class _PremiumInsightsScreenState extends State<PremiumInsightsScreen>
     _loadInsights();
   }
 
+  // Helper method to ensure all insights have the correct risk level
+  List<AIInsight> _ensureCorrectRiskLevel(List<AIInsight> insights) {
+    if (widget.overrideRiskLevel != null) {
+      return insights
+          .map(
+            (insight) => insight.copyWith(riskLevel: widget.overrideRiskLevel!),
+          )
+          .toList();
+    }
+    return insights;
+  }
+
   Future<void> _loadInsights() async {
     try {
       setState(() {
@@ -68,14 +87,35 @@ class _PremiumInsightsScreenState extends State<PremiumInsightsScreen>
         _errorMessage = null;
       });
 
-      final insights = await ApiService.getInsightsForPR(
-        widget.pullRequest.number,
-        repositoryId: widget.pullRequest.repositoryId,
-      );
+      List<AIInsight> insights;
+
+      // Use preloaded insights if available, otherwise fetch from API
+      if (widget.preloadedInsights != null) {
+        insights = widget.preloadedInsights!;
+
+        // Check if preloaded insights have complete data (key changes)
+        // If any insight is missing key changes, fetch from API for complete data
+        final hasIncompleteData = insights.any(
+          (insight) => insight.keyChanges.isEmpty,
+        );
+
+        if (hasIncompleteData) {
+          // Fetch complete data from API
+          insights = await ApiService.getInsightsForPR(
+            widget.pullRequest.number,
+            repositoryId: widget.pullRequest.repositoryId,
+          );
+        }
+      } else {
+        insights = await ApiService.getInsightsForPR(
+          widget.pullRequest.number,
+          repositoryId: widget.pullRequest.repositoryId,
+        );
+      }
 
       if (mounted) {
         setState(() {
-          _insights = insights;
+          _insights = _ensureCorrectRiskLevel(insights);
           _isLoading = false;
         });
 

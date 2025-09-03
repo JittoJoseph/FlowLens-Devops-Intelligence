@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../config/premium_theme.dart';
 import '../services/api_service.dart';
 import '../models/ai_insight.dart';
 import '../models/pull_request.dart';
+import '../providers/github_provider.dart';
 import '../widgets/app_sidebar.dart';
 import '../widgets/modern_floating_action_button.dart';
 import '../screens/premium_insights_screen.dart';
@@ -55,14 +57,17 @@ class _InsightsListingScreenState extends State<InsightsListingScreen> {
 
   // Simplified data processing method
   void _processInsights(List<AIInsight> insights) {
-    final Map<int, List<AIInsight>> groupedInsights = {};
+    final Map<String, List<AIInsight>> groupedInsights =
+        {}; // Changed to String key
 
-    // Group insights by PR number
+    // Group insights by repository + PR number combination
     for (final insight in insights) {
       if (insight.id.isNotEmpty &&
           insight.prNumber > 0 &&
           insight.summary.isNotEmpty) {
-        groupedInsights.putIfAbsent(insight.prNumber, () => []).add(insight);
+        // Create composite key: repositoryId_prNumber
+        final key = '${insight.repositoryId ?? 'unknown'}_${insight.prNumber}';
+        groupedInsights.putIfAbsent(key, () => []).add(insight);
       }
     }
 
@@ -138,12 +143,28 @@ class _InsightsListingScreenState extends State<InsightsListingScreen> {
     });
   }
 
+  String _getRepositoryName(String? repositoryId) {
+    if (repositoryId == null) return 'Unknown Repository';
+
+    final githubProvider = Provider.of<GitHubProvider>(context, listen: false);
+    try {
+      final repository = githubProvider.repositories.firstWhere(
+        (repo) => repo.id == repositoryId,
+      );
+      return repository.name;
+    } catch (e) {
+      return 'Unknown Repository';
+    }
+  }
+
   void _navigateToInsights(InsightGroup group) {
     // Create a PullRequest object from the insight data for navigation
     final firstInsight = group.insights.first;
 
     final pullRequest = PullRequest(
       id: 'insight-${group.prNumber}',
+      repositoryId: firstInsight
+          .repositoryId, // Fix: Use actual repository ID from insight
       number: group.prNumber,
       title: group.prTitle,
       description:
@@ -151,8 +172,7 @@ class _InsightsListingScreenState extends State<InsightsListingScreen> {
       author: firstInsight.author,
       authorAvatar: firstInsight.avatarUrl,
       commitSha: firstInsight.commitSha,
-      repositoryName:
-          'repository', // TODO: Get actual repository name if available
+      repositoryName: _getRepositoryName(firstInsight.repositoryId),
       createdAt: group.createdAt,
       updatedAt: group.createdAt,
       status: PRStatus
@@ -167,7 +187,12 @@ class _InsightsListingScreenState extends State<InsightsListingScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => PremiumInsightsScreen(pullRequest: pullRequest),
+        builder: (context) => PremiumInsightsScreen(
+          pullRequest: pullRequest,
+          preloadedInsights: group.insights, // Pass the actual insights data
+          overrideRiskLevel:
+              group.highestRiskLevel, // Pass the correct risk level
+        ),
       ),
     );
   }

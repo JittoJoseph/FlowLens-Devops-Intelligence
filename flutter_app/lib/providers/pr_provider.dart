@@ -7,7 +7,7 @@ import '../services/websocket_service.dart';
 
 class PRProvider extends ChangeNotifier {
   List<PullRequest> _pullRequests = [];
-  final Map<int, AIInsight> _insights = {};
+  final Map<String, AIInsight> _insights = {}; // Changed to use composite key
   bool _isLoading = false;
   bool _isFetchingNewPR = false; // New indicator for background fetching
   String? _errorMessage;
@@ -21,6 +21,11 @@ class PRProvider extends ChangeNotifier {
 
   // WebSocket service
   final WebSocketService _webSocketService = WebSocketService();
+
+  // Helper function to create a composite key for insights
+  String _getInsightKey(String? repositoryId, int prNumber) {
+    return '${repositoryId ?? 'unknown'}_$prNumber';
+  }
 
   // Getters
   List<PullRequest> get pullRequests => List.unmodifiable(_pullRequests);
@@ -140,7 +145,7 @@ class PRProvider extends ChangeNotifier {
 
         // Add insights if available
         if (insights.isNotEmpty) {
-          _insights[prNumber] = insights.first;
+          _insights[_getInsightKey(repositoryId, prNumber)] = insights.first;
         }
 
         // Emit new PR event for UI notifications
@@ -185,15 +190,17 @@ class PRProvider extends ChangeNotifier {
       );
       _insights.clear();
       for (final insight in insightsList) {
-        _insights[insight.prNumber] = insight;
+        final key = _getInsightKey(insight.repositoryId, insight.prNumber);
+        _insights[key] = insight;
       }
     } catch (e) {
       // Don't fail the whole operation if insights fail
     }
   }
 
-  AIInsight? getInsightForPR(int prNumber) {
-    return _insights[prNumber];
+  AIInsight? getInsightForPR(int prNumber, {String? repositoryId}) {
+    final key = _getInsightKey(repositoryId, prNumber);
+    return _insights[key];
   }
 
   List<PullRequest> get openPRs {
