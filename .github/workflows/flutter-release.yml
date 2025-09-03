@@ -18,7 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -39,9 +39,6 @@ jobs:
       - name: Get Flutter dependencies
         working-directory: ./flutter_app
         run: flutter pub get
-
-      - name: Run Flutter doctor
-        run: flutter doctor -v
 
       - name: Run Flutter analyze
         working-directory: ./flutter_app
@@ -68,43 +65,17 @@ jobs:
             --build-name=${{ steps.version_info.outputs.version }} \
             --build-number=${{ steps.version_info.outputs.build_number }}
 
-      - name: Build App Bundle
-        working-directory: ./flutter_app
-        run: |
-          flutter build appbundle --release \
-            --build-name=${{ steps.version_info.outputs.version }} \
-            --build-number=${{ steps.version_info.outputs.build_number }}
-
-      - name: Rename APK and AAB files
+      - name: Rename APK file
         run: |
           cd flutter_app/build/app/outputs/flutter-apk
           mv app-release.apk flowlens-${{ steps.version_info.outputs.version }}-release.apk
 
-          cd ../bundle/release
-          mv app-release.aab flowlens-${{ steps.version_info.outputs.version }}-release.aab
-
       - name: Generate changelog
         id: changelog
         run: |
-          # Get the latest commits since last release
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -z "$LAST_TAG" ]; then
-            COMMITS=$(git log --oneline --max-count=10)
-          else
-            COMMITS=$(git log ${LAST_TAG}..HEAD --oneline)
-          fi
-
-          # Create changelog file
+          # Create simple changelog file
           cat > CHANGELOG.md << 'EOF'
-          ## What's New in FlowLens v${{ steps.version_info.outputs.version }}
-
-          ### Recent Changes:
-          EOF
-
-          # Add commits to changelog
-          echo "$COMMITS" >> CHANGELOG.md
-
-          cat >> CHANGELOG.md << 'EOF'
+          ## FlowLens v${{ steps.version_info.outputs.version }}
 
           ### Technical Details:
           - App Version: ${{ steps.version_info.outputs.version }}
@@ -113,7 +84,6 @@ jobs:
 
           ### Download:
           - APK: Direct installation file for Android devices
-          - AAB: App Bundle for Google Play Store distribution
 
           ### Installation:
           1. Download the APK file
@@ -135,20 +105,9 @@ jobs:
           prerelease: false
           files: |
             ./flutter_app/build/app/outputs/flutter-apk/flowlens-${{ steps.version_info.outputs.version }}-release.apk
-            ./flutter_app/build/app/outputs/bundle/release/flowlens-${{ steps.version_info.outputs.version }}-release.aab
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: flutter-builds-${{ steps.version_info.outputs.version }}
-          path: |
-            flutter_app/build/app/outputs/flutter-apk/*.apk
-            flutter_app/build/app/outputs/bundle/release/*.aab
-          retention-days: 30
 
       - name: Notify build completion
         run: |
           echo "✅ FlowLens Release Build Completed Successfully!"
           echo "📱 APK: flowlens-${{ steps.version_info.outputs.version }}-release.apk"
-          echo "📦 AAB: flowlens-${{ steps.version_info.outputs.version }}-release.aab"
           echo "🏷️ Release created with tag: v${{ steps.version_info.outputs.version }}-${{ steps.version_info.outputs.build_number }}"
