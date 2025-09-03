@@ -32,12 +32,20 @@ class _DashboardScreenState extends State<DashboardScreen>
       vsync: this,
     );
     _animationController.forward();
-    _loadData();
+
+    // Load data after the frame is built to avoid setState during build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadData();
+    });
   }
 
   void _loadData() async {
     final prProvider = Provider.of<PRProvider>(context, listen: false);
-    await prProvider.loadPullRequests();
+    final githubProvider = Provider.of<GitHubProvider>(context, listen: false);
+
+    // Load PRs for the selected repository
+    final repositoryId = githubProvider.selectedRepository?.id;
+    await prProvider.loadPullRequests(repositoryId: repositoryId);
   }
 
   @override
@@ -115,6 +123,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                         prProvider.pullRequests,
                       );
 
+                      if (filteredPRs.isEmpty) {
+                        return SliverFillRemaining(
+                          child: _buildEmptyPRsState(),
+                        );
+                      }
+
                       return SliverPadding(
                         padding: const EdgeInsets.symmetric(horizontal: 20),
                         sliver: SliverList(
@@ -153,6 +167,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                                         ),
                                     child: EnhancedPRCard(
                                       pullRequest: filteredPRs[index],
+                                      insight: prProvider.getInsightForPR(
+                                        filteredPRs[index].number,
+                                      ),
                                       onTap: () {
                                         // Set the selected PR in the provider
                                         Provider.of<PRProvider>(
@@ -413,8 +430,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           CurvedAnimation(
             parent: _animationController,
             curve: Interval(
-              index * 0.1,
-              0.8 + (index * 0.1),
+              (index * 0.1).clamp(0.0, 0.8),
+              (0.8 + (index * 0.1)).clamp(0.1, 1.0),
               curve: Curves.easeOutBack,
             ),
           ),
@@ -423,13 +440,16 @@ class _DashboardScreenState extends State<DashboardScreen>
         return Transform.translate(
           offset: Offset(0, (1 - delayedAnimation.value) * 30),
           child: Opacity(
-            opacity: delayedAnimation.value,
+            opacity: delayedAnimation.value.clamp(0.0, 1.0),
             child: Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color: AppTheme.cardColor,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: color.withValues(alpha: 0.15), width: 1),
+                border: Border.all(
+                  color: color.withValues(alpha: 0.15),
+                  width: 1,
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: color.withValues(alpha: 0.08),
@@ -662,6 +682,30 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
             ),
             child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyPRsState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.merge_outlined, size: 64, color: AppTheme.textHintColor),
+          const SizedBox(height: 16),
+          Text(
+            'No pull requests found',
+            style: AppTheme.premiumHeadingStyle.copyWith(fontSize: 18),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'There are no pull requests matching your current filters',
+            style: AppTheme.premiumBodyStyle.copyWith(
+              color: AppTheme.textSecondaryColor,
+            ),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
