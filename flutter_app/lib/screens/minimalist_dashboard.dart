@@ -9,7 +9,7 @@ import '../widgets/simple_app_header.dart';
 import '../widgets/app_sidebar.dart';
 import '../widgets/status_filter_chips.dart';
 import '../models/pull_request.dart';
-import 'pr_details_screen.dart';
+import '../screens/premium_insights_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -177,11 +177,14 @@ class _DashboardScreenState extends State<DashboardScreen>
                                           listen: false,
                                         ).selectPR(filteredPRs[index]);
 
-                                        // Navigate to PR details screen
+                                        // Navigate to premium insights screen
                                         Navigator.of(context).push(
                                           MaterialPageRoute(
                                             builder: (context) =>
-                                                const PRDetailsScreen(),
+                                                PremiumInsightsScreen(
+                                                  pullRequest:
+                                                      filteredPRs[index],
+                                                ),
                                           ),
                                         );
                                       },

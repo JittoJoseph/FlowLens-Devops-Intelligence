@@ -8,7 +8,7 @@ import 'screens/splash_screen.dart';
 import 'screens/github_connect_screen.dart';
 import 'screens/repositories_screen.dart';
 import 'screens/minimalist_dashboard.dart';
-import 'screens/pr_details_screen.dart';
+import 'screens/insights_listing_screen.dart';
 
 void main() {
   runApp(const FlowLensApp());
@@ -39,7 +39,7 @@ class FlowLensApp extends StatelessWidget {
               '/connect': (context) => const GitHubConnectScreen(),
               '/repositories': (context) => const RepositoriesScreen(),
               '/dashboard': (context) => const DashboardScreen(),
-              '/pr-details': (context) => const PRDetailsScreen(),
+              '/insights': (context) => const InsightsListingScreen(),
             },
           );
         },

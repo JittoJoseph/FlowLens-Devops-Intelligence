@@ -125,12 +125,18 @@ class AppSidebar extends StatelessWidget {
                         ),
                         _buildMenuItem(
                           Icons.insights_outlined,
-                          'Analytics',
-                          'Performance metrics',
-                          false,
+                          'AI Insights',
+                          'View analysis & reports',
+                          ModalRoute.of(context)?.settings.name == '/insights',
                           () {
                             Navigator.pop(context);
-                            // TODO: Navigate to analytics
+                            if (ModalRoute.of(context)?.settings.name !=
+                                '/insights') {
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/insights',
+                              );
+                            }
                           },
                         ),
                         _buildMenuItem(
@@ -332,12 +338,12 @@ class AppSidebar extends StatelessWidget {
   // Helper method to check if we're currently on a dashboard screen
   bool _isDashboardActive(BuildContext context) {
     final routeName = ModalRoute.of(context)?.settings.name;
-    
+
     // Check for named dashboard route
     if (routeName == '/dashboard') {
       return true;
     }
-    
+
     // Check if the current widget tree contains a DashboardScreen
     // This handles cases where we navigate via MaterialPageRoute
     try {
@@ -352,7 +358,7 @@ class AppSidebar extends StatelessWidget {
     } catch (e) {
       // If we can't determine from arguments, fall back to route name check
     }
-    
+
     return false;
   }
 }
