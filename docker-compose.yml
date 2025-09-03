@@ -1,0 +1,102 @@
+version: '3.8'
+
+# This Docker Compose file orchestrates the entire FlowLens backend stack,
+# including the API/AI service and the data ingestion service.
+# It is designed for both local development and as a reference for production deployments.
+
+services:
+  #--------------------------------------------------------------------------
+  # API Service: The central brain for AI analysis and client communication.
+  #--------------------------------------------------------------------------
+  api-service:
+    # Use the Dockerfile located in the ./api_service directory.
+    build:
+      context: ./api_service
+      dockerfile: Dockerfile
+    container_name: flowlens-api
+    
+    # Ensures the service restarts automatically if it crashes.
+    restart: unless-stopped
+    
+    # Maps the container's port 8000 to the host's port 8000.
+    # In production, a reverse proxy (e.g., Nginx) would typically handle this.
+    ports:
+      - target: 8000
+        published: 8000
+        protocol: tcp
+        mode: host
+
+    # Load environment variables from the .env file in the root directory.
+    env_file: ./.env
+    
+    # Mounts the YugabyteDB SSL certificate into the container at the expected path.
+    # This is critical for secure database connections.
+    volumes:
+      - ./api_service/root.crt:/etc/ssl/certs/root.crt:ro
+      
+    # Health check to ensure the API server is responsive.
+    # Docker uses this to determine if the container is healthy.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+      
+    # Specifies that this service should use our custom isolated network.
+    networks:
+      - flowlens-net
+
+    # Production-grade logging configuration. Prevents logs from consuming all disk space.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m" # Max size of a log file before it's rotated.
+        max-file: "3"   # Number of rotated log files to keep.
+
+  #--------------------------------------------------------------------------
+  # Ingestion Service: The secure gateway for incoming GitHub webhooks.
+  #--------------------------------------------------------------------------
+  ingestion-service:
+    build:
+      context: ./ingestion_service
+      dockerfile: Dockerfile
+    container_name: flowlens-ingestion
+    restart: unless-stopped
+    
+    ports:
+      - target: 3000
+        published: 3000
+        protocol: tcp
+        mode: host
+        
+    env_file: ./.env
+
+    # Use a named volume for logs for better performance and management by Docker.
+    volumes:
+      - ingestion-logs:/app/logs
+
+    # This service's health check is defined within its Dockerfile.
+    # Docker Compose will automatically use it. This comment is for clarity.
+
+    networks:
+      - flowlens-net
+      
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+#--------------------------------------------------------------------------
+# Networks: Defines the custom network for inter-service communication.
+#--------------------------------------------------------------------------
+networks:
+  flowlens-net:
+    driver: bridge # The standard Docker network driver.
+
+#--------------------------------------------------------------------------
+# Volumes: Defines named volumes for persistent data.
+#--------------------------------------------------------------------------
+volumes:
+  ingestion-logs: # Persists logs from the ingestion service.
