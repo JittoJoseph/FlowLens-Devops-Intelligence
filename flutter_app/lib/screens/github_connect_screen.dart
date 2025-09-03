@@ -236,7 +236,7 @@ class _GitHubConnectScreenState extends State<GitHubConnectScreen>
                     FadeTransition(
                       opacity: _contentAnimation,
                       child: Text(
-                        'Demo Mode: No real authentication required',
+                        'Demo Mode: No authentication required',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: AppTheme.textHintColor,
                           fontStyle: FontStyle.italic,
