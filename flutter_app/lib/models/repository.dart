@@ -12,6 +12,9 @@ class Repository {
   final String defaultBranch;
   final int openPRs;
   final int totalPRs;
+  final int mergedPRs;
+  final int closedPRs;
+  final int draftPRs;
   final DateTime lastActivity;
   final List<String> languages;
   final int stars;
@@ -29,6 +32,9 @@ class Repository {
     required this.defaultBranch,
     required this.openPRs,
     required this.totalPRs,
+    this.mergedPRs = 0,
+    this.closedPRs = 0,
+    this.draftPRs = 0,
     required this.lastActivity,
     required this.languages,
     this.stars = 0,
@@ -47,6 +53,9 @@ class Repository {
     String? defaultBranch,
     int? openPRs,
     int? totalPRs,
+    int? mergedPRs,
+    int? closedPRs,
+    int? draftPRs,
     DateTime? lastActivity,
     List<String>? languages,
     int? stars,
@@ -64,6 +73,9 @@ class Repository {
       defaultBranch: defaultBranch ?? this.defaultBranch,
       openPRs: openPRs ?? this.openPRs,
       totalPRs: totalPRs ?? this.totalPRs,
+      mergedPRs: mergedPRs ?? this.mergedPRs,
+      closedPRs: closedPRs ?? this.closedPRs,
+      draftPRs: draftPRs ?? this.draftPRs,
       lastActivity: lastActivity ?? this.lastActivity,
       languages: languages ?? this.languages,
       stars: stars ?? this.stars,
@@ -84,6 +96,9 @@ class Repository {
       'defaultBranch': defaultBranch,
       'openPRs': openPRs,
       'totalPRs': totalPRs,
+      'mergedPRs': mergedPRs,
+      'closedPRs': closedPRs,
+      'draftPRs': draftPRs,
       'lastActivity': lastActivity.toIso8601String(),
       'languages': languages,
       'stars': stars,
@@ -104,6 +119,9 @@ class Repository {
       defaultBranch: json['defaultBranch'] as String,
       openPRs: json['openPRs'] as int,
       totalPRs: json['totalPRs'] as int,
+      mergedPRs: json['mergedPRs'] as int? ?? 0,
+      closedPRs: json['closedPRs'] as int? ?? 0,
+      draftPRs: json['draftPRs'] as int? ?? 0,
       lastActivity: DateTime.parse(json['lastActivity'] as String),
       languages: List<String>.from(json['languages'] as List),
       stars: json['stars'] as int? ?? 0,
@@ -126,6 +144,9 @@ class Repository {
       defaultBranch: json['default_branch'] as String,
       openPRs: json['open_prs'] as int,
       totalPRs: json['total_prs'] as int,
+      mergedPRs: json['merged_prs'] as int? ?? 0,
+      closedPRs: json['closed_prs'] as int? ?? 0,
+      draftPRs: json['draft_prs'] as int? ?? 0,
       lastActivity: DateTime.parse(json['last_activity'] as String),
       languages: [
         json['language'] as String? ?? 'Unknown',
@@ -147,6 +168,6 @@ class Repository {
 
   @override
   String toString() {
-    return 'Repository(name: $name, owner: $owner, openPRs: $openPRs)';
+    return 'Repository(name: $name, owner: $owner, openPRs: $openPRs, mergedPRs: $mergedPRs, closedPRs: $closedPRs)';
   }
 }
