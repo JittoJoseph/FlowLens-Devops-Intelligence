@@ -184,93 +184,93 @@ class PullRequest {
     );
   }
 
-  // Factory constructor for API response format
-  factory PullRequest.fromApiJson(Map<String, dynamic> json) {
-    // Helper function to convert individual state values
-    PRStatus convertStateValue(String state) {
-      switch (state.toLowerCase()) {
-        case 'open':
-        case 'opened':
-          return PRStatus.pending;
-        case 'building':
-          return PRStatus.building;
-        case 'buildpassed':
-          return PRStatus.buildPassed;
-        case 'buildfailed':
-          return PRStatus.buildFailed;
-        case 'approved':
-          return PRStatus.approved;
-        case 'merged':
-          return PRStatus.merged;
-        case 'closed':
-          return PRStatus.closed;
-        default:
-          return PRStatus.pending;
-      }
+  // Static method for sophisticated status determination with priority-based logic
+  static PRStatus determineStatus(
+    String basicState,
+    List<dynamic>? history,
+    bool merged,
+  ) {
+    // If merged, that's the final status
+    if (merged || basicState.toLowerCase() == 'merged') {
+      return PRStatus.merged;
     }
 
-    // Sophisticated status determination with priority-based logic
-    PRStatus determineStatus(
-      String basicState,
-      List<dynamic>? history,
-      bool merged,
-    ) {
-      // If merged, that's the final status
-      if (merged || basicState.toLowerCase() == 'merged') {
-        return PRStatus.merged;
-      }
+    // If closed but not merged
+    if (basicState.toLowerCase() == 'closed') {
+      return PRStatus.closed;
+    }
 
-      // If closed but not merged
-      if (basicState.toLowerCase() == 'closed') {
-        return PRStatus.closed;
-      }
-
-      // Extract latest meaningful status from history
-      String? latestMeaningfulState;
-      if (history != null && history.isNotEmpty) {
-        // Find the most recent non-open state
-        for (int i = history.length - 1; i >= 0; i--) {
-          final event = history[i];
-          if (event is Map<String, dynamic>) {
-            final stateName = event['state_name'] as String?;
-            if (stateName != null &&
-                stateName != 'open' &&
-                stateName != 'opened') {
-              latestMeaningfulState = stateName;
-              break;
-            }
+    // Extract latest meaningful status from history
+    String? latestMeaningfulState;
+    if (history != null && history.isNotEmpty) {
+      // Find the most recent non-open state
+      for (int i = history.length - 1; i >= 0; i--) {
+        final event = history[i];
+        if (event is Map<String, dynamic>) {
+          final stateName = event['state_name'] as String?;
+          if (stateName != null &&
+              stateName != 'open' &&
+              stateName != 'opened') {
+            latestMeaningfulState = stateName;
+            break;
           }
         }
       }
-
-      // Priority-based status determination logic:
-      // 1. merged/closed (already handled above)
-      // 2. approved
-      // 3. buildPassed/buildFailed/building
-      // 4. opened/pending
-
-      if (latestMeaningfulState != null) {
-        // Check for approval states first (higher priority)
-        if (latestMeaningfulState == 'approved') {
-          return PRStatus.approved;
-        }
-
-        // Then check for build states
-        if (latestMeaningfulState == 'buildPassed') {
-          return PRStatus.buildPassed;
-        }
-        if (latestMeaningfulState == 'buildFailed') {
-          return PRStatus.buildFailed;
-        }
-        if (latestMeaningfulState == 'building') {
-          return PRStatus.building;
-        }
-      }
-
-      // Fallback to basic state conversion
-      return convertStateValue(basicState);
     }
 
+    // Priority-based status determination logic:
+    // 1. merged/closed (already handled above)
+    // 2. approved
+    // 3. buildPassed/buildFailed/building
+    // 4. opened/pending
+
+    if (latestMeaningfulState != null) {
+      // Check for approval states first (higher priority)
+      if (latestMeaningfulState == 'approved') {
+        return PRStatus.approved;
+      }
+
+      // Then check for build states
+      if (latestMeaningfulState == 'buildPassed') {
+        return PRStatus.buildPassed;
+      }
+      if (latestMeaningfulState == 'buildFailed') {
+        return PRStatus.buildFailed;
+      }
+      if (latestMeaningfulState == 'building') {
+        return PRStatus.building;
+      }
+    }
+
+    // Fallback to basic state conversion
+    return convertStateValue(basicState);
+  }
+
+  // Helper function to convert individual state values
+  static PRStatus convertStateValue(String state) {
+    switch (state.toLowerCase()) {
+      case 'open':
+      case 'opened':
+        return PRStatus.pending;
+      case 'building':
+        return PRStatus.building;
+      case 'buildpassed':
+        return PRStatus.buildPassed;
+      case 'buildfailed':
+        return PRStatus.buildFailed;
+      case 'approved':
+        return PRStatus.approved;
+      case 'merged':
+        return PRStatus.merged;
+      case 'closed':
+        return PRStatus.closed;
+      default:
+        return PRStatus.pending;
+    }
+  }
+
+  // Factory constructor for API response format
+  factory PullRequest.fromApiJson(Map<String, dynamic> json) {
     return PullRequest(
       id: json['id'] as String?,
       repositoryId:
@@ -295,7 +295,7 @@ class PullRequest {
       updatedAt: DateTime.parse(
         json['updatedAt'] as String? ?? json['updated_at'] as String,
       ),
-      status: determineStatus(
+      status: PullRequest.determineStatus(
         json['status'] as String? ?? json['state'] as String? ?? 'pending',
         json['history'] as List<dynamic>?,
         json['merged'] as bool? ?? false,
