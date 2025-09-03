@@ -6,6 +6,16 @@ This project is our solution for the **DevByZero Hackathon**, directly addressin
 
 ---
 
+## 🎥 Live Demo
+
+https://github.com/DevOps-Malayalam/DevByZero-Mission-Control/raw/main/flow-lens-demo.mp4
+
+Can't see the video?
+
+[![Watch Demo Video](https://img.shields.io/badge/🎥_Watch_Demo-Loom_Video-00D9FF?style=for-the-badge&logo=loom&logoColor=white)](https://www.loom.com/share/4ca4a08ba3cb4876a341ca1a7d8ed10c)
+
+---
+
 ## 🌟 Key Innovations & Features
 
 | Feature                                | Description                                                                                                                                  | Hackathon Keywords Addressed                                           |
@@ -50,16 +60,6 @@ We believe in clean code and even cleaner documentation. Our repository is struc
 - **[System Architecture](./docs/architecture.md)**: A deep dive into our distributed system's design and data flow.
 - **[Database Guide](./docs/database.md)**: Detailed information on our YugabyteDB schema and setup.
 - **[Flutter Application Guide](./docs/flutter_app.md)**: Documentation for the mobile client.
-
----
-
-## 🎥 Live Demo
-
-https://github.com/DevOps-Malayalam/DevByZero-Mission-Control/raw/main/flow-lens-demo.mp4
-
-_Can't see the video?_ [![Watch on Loom](https://img.shields.io/badge/🎥_Watch_on_Loom-00D9FF?style=for-the-badge&logo=loom&logoColor=white)](https://www.loom.com/share/4ca4a08ba3cb4876a341ca1a7d8ed10c)
-
----
 
 ## 🏁 Quick Start: The Full Stack
 
