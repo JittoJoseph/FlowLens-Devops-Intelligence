@@ -8,12 +8,12 @@ This project is our solution for the **DevByZero Hackathon**, directly addressin
 
 ## 🌟 Key Innovations & Features
 
-| Feature                          | Description                                                                                                                                     | Hackathon Keywords Addressed                                     |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| 🚀 **Event-Driven Microservices**    | A decoupled architecture with specialized services for data ingestion and AI processing, ensuring scalability and high availability.          | `Distributed Systems`, `Scalable Architecture`, `Technical Excellence` |
-| 🧠 **AI-Powered Governance Layer**   | Utilizes a Google Gemini-powered engine to analyze code changes, assess risk, and provide intelligent approval recommendations in real time. | `AI/ML-driven decision-making`, `Intelligent System`, `Innovation`     |
-| 🗄️ **Distributed & Fault-Tolerant**  | Built on **YugabyteDB**, our system guarantees data integrity and performance, mirroring real-world enterprise requirements for resilience.    | `YugabyteDB`, `Fault-tolerant performance`, `High Availability`        |
-| 📱 **Unified Real-Time Observability** | A modern Flutter dashboard provides a single pane of glass into the entire DevOps lifecycle, from commit to production, for multiple roles. | `Flutter-based interfaces`, `Rich Analytics`, `User Experience`        |
+| Feature                                | Description                                                                                                                                  | Hackathon Keywords Addressed                                           |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 🚀 **Event-Driven Microservices**      | A decoupled architecture with specialized services for data ingestion and AI processing, ensuring scalability and high availability.         | `Distributed Systems`, `Scalable Architecture`, `Technical Excellence` |
+| 🧠 **AI-Powered Governance Layer**     | Utilizes a Google Gemini-powered engine to analyze code changes, assess risk, and provide intelligent approval recommendations in real time. | `AI/ML-driven decision-making`, `Intelligent System`, `Innovation`     |
+| 🗄️ **Distributed & Fault-Tolerant**    | Built on **YugabyteDB**, our system guarantees data integrity and performance, mirroring real-world enterprise requirements for resilience.  | `YugabyteDB`, `Fault-tolerant performance`, `High Availability`        |
+| 📱 **Unified Real-Time Observability** | A modern Flutter dashboard provides a single pane of glass into the entire DevOps lifecycle, from commit to production, for multiple roles.  | `Flutter-based interfaces`, `Rich Analytics`, `User Experience`        |
 
 ---
 
@@ -23,18 +23,19 @@ Our system is designed for clarity and resilience, separating concerns to enable
 
 ```mermaid
 flowchart LR
-    A["GitHub 
-    (Multiple Repos)"] -->|"Webhook"| B["Ingestion Service 
+    A["GitHub
+    (Multiple Repos)"] -->|"Webhook"| B["Ingestion Service
     (Node.js)"]
-    B -->|"Writes + Flags"| C[("YugabyteDB 
+    B -->|"Writes + Flags"| C[("YugabyteDB
     Repository-Centric Schema")]
     C -->|"Polling processed flag"| D["FlowLens API Service v2.0 (Python)"]
-    D -->|"Real-time Updates: WebSocket + REST"| E["Flutter App 
+    D -->|"Real-time Updates: WebSocket + REST"| E["Flutter App
     (Multi-repo)"]
 
 ```
 
 ### Core Components
+
 - **[📦 Ingestion Service](./ingestion_service/):** The highly-available gateway that securely ingests and validates real-time events from GitHub.
 - **[🧠 API Service](./api_service/):** The central brain of the platform, responsible for AI-powered decisioning, state management, and real-time broadcasting.
 - **[📱 Flutter App](./flutter_app/):** The multi-role interface providing rich analytics and visualizations for developers, managers, and compliance teams.
@@ -51,19 +52,27 @@ We believe in clean code and even cleaner documentation. Our repository is struc
 - **[Flutter Application Guide](./docs/flutter_app.md)**: Documentation for the mobile client.
 
 ---
-<div style="position: relative; padding-bottom: 62.5%; height: 0;"><iframe src="https://www.loom.com/embed/4ca4a08ba3cb4876a341ca1a7d8ed10c?sid=2701aac7-07d7-4020-af7b-4f2e8c474c1c" frameborder="0" webkitallowfullscreen mozallowfullscreen allowfullscreen style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></iframe></div>
 
-https://www.loom.com/share/4ca4a08ba3cb4876a341ca1a7d8ed10c
+## 🎥 Live Demo
+
+https://github.com/DevOps-Malayalam/DevByZero-Mission-Control/raw/main/flow-lens-demo.mp4
+
+_Can't see the video?_ [![Watch on Loom](https://img.shields.io/badge/🎥_Watch_on_Loom-00D9FF?style=for-the-badge&logo=loom&logoColor=white)](https://www.loom.com/share/4ca4a08ba3cb4876a341ca1a7d8ed10c)
+
+---
 
 ## 🏁 Quick Start: The Full Stack
 
 This guide provides the fastest way to get the entire FlowLens application running locally.
 
 ### 1. Prerequisites: Database Setup
+
 Before you begin, ensure your database is ready.
+
 - Follow the **[YugabyteDB Setup Guide](./docs/database.md#database-setup)** to configure your instance and apply the schema.
 
 ### 2. Run the Backend (Recommended: Docker)
+
 The entire backend is orchestrated with Docker Compose for a simple, one-command launch.
 
 - **[🚀 Follow the Docker Compose Guide](./README.md#-running-the-entire-backend-with-docker)** to build and run the `api-service` and `ingestion-service` containers.
@@ -71,6 +80,7 @@ The entire backend is orchestrated with Docker Compose for a simple, one-command
 This is the preferred method for a stable environment that mirrors a production setup.
 
 ### 3. Run the Flutter Application
+
 With the backend running, you can now launch the mobile client.
 
 1.  **Navigate to the app directory:**
@@ -86,16 +96,12 @@ With the backend running, you can now launch the mobile client.
     flutter run
     ```
 
- **For Backend Developers:** If you need to run and debug a single backend service natively (without Docker), please see our **[Local Development Guide](./docs/development.md)**.
-
+**For Backend Developers:** If you need to run and debug a single backend service natively (without Docker), please see our **[Local Development Guide](./docs/development.md)**.
 
 </br>
 
-
-> ‎ 
+> ‎
 > **</> Built by Mission Control | DevByZero 2025**
 >
-> *Defining the infinite possibilities in your DevOps pipeline.*
-> ‎ 
-
-
+> _Defining the infinite possibilities in your DevOps pipeline._
+> ‎
