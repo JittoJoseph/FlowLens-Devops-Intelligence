@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 @immutable
 class Repository {
+  final String? id; // UUID from API
   final String name;
   final String fullName;
   final String description;
@@ -15,8 +16,10 @@ class Repository {
   final List<String> languages;
   final int stars;
   final int forks;
+  final String? htmlUrl; // GitHub URL
 
   const Repository({
+    this.id,
     required this.name,
     required this.fullName,
     required this.description,
@@ -30,9 +33,11 @@ class Repository {
     required this.languages,
     this.stars = 0,
     this.forks = 0,
+    this.htmlUrl,
   });
 
   Repository copyWith({
+    String? id,
     String? name,
     String? fullName,
     String? description,
@@ -46,8 +51,10 @@ class Repository {
     List<String>? languages,
     int? stars,
     int? forks,
+    String? htmlUrl,
   }) {
     return Repository(
+      id: id ?? this.id,
       name: name ?? this.name,
       fullName: fullName ?? this.fullName,
       description: description ?? this.description,
@@ -61,11 +68,13 @@ class Repository {
       languages: languages ?? this.languages,
       stars: stars ?? this.stars,
       forks: forks ?? this.forks,
+      htmlUrl: htmlUrl ?? this.htmlUrl,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'name': name,
       'fullName': fullName,
       'description': description,
@@ -79,11 +88,13 @@ class Repository {
       'languages': languages,
       'stars': stars,
       'forks': forks,
+      'htmlUrl': htmlUrl,
     };
   }
 
   factory Repository.fromJson(Map<String, dynamic> json) {
     return Repository(
+      id: json['id'] as String?,
       name: json['name'] as String,
       fullName: json['fullName'] as String,
       description: json['description'] as String,
@@ -97,6 +108,31 @@ class Repository {
       languages: List<String>.from(json['languages'] as List),
       stars: json['stars'] as int? ?? 0,
       forks: json['forks'] as int? ?? 0,
+      htmlUrl: json['htmlUrl'] as String?,
+    );
+  }
+
+  // Factory constructor for API response format
+  factory Repository.fromApiJson(Map<String, dynamic> json) {
+    return Repository(
+      id: json['id'] as String?,
+      name: json['name'] as String,
+      fullName: json['full_name'] as String,
+      description: json['description'] as String? ?? '',
+      owner: json['owner'] as String,
+      ownerAvatar:
+          'https://github.com/${json['owner']}.png', // GitHub avatar URL pattern
+      isPrivate: json['is_private'] as bool,
+      defaultBranch: json['default_branch'] as String,
+      openPRs: json['open_prs'] as int,
+      totalPRs: json['total_prs'] as int,
+      lastActivity: DateTime.parse(json['last_activity'] as String),
+      languages: [
+        json['language'] as String? ?? 'Unknown',
+      ], // API provides single language
+      stars: json['stars'] as int? ?? 0,
+      forks: json['forks'] as int? ?? 0,
+      htmlUrl: json['html_url'] as String?,
     );
   }
 

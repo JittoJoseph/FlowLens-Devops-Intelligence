@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 @immutable
 class AIInsight {
   final String id;
+  final String? repositoryId; // Repository UUID
   final int prNumber;
   final String commitSha;
   final RiskLevel riskLevel;
@@ -14,6 +15,7 @@ class AIInsight {
 
   const AIInsight({
     required this.id,
+    this.repositoryId,
     required this.prNumber,
     required this.commitSha,
     required this.riskLevel,
@@ -26,6 +28,7 @@ class AIInsight {
 
   AIInsight copyWith({
     String? id,
+    String? repositoryId,
     int? prNumber,
     String? commitSha,
     RiskLevel? riskLevel,
@@ -37,6 +40,7 @@ class AIInsight {
   }) {
     return AIInsight(
       id: id ?? this.id,
+      repositoryId: repositoryId ?? this.repositoryId,
       prNumber: prNumber ?? this.prNumber,
       commitSha: commitSha ?? this.commitSha,
       riskLevel: riskLevel ?? this.riskLevel,
@@ -51,6 +55,7 @@ class AIInsight {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'repositoryId': repositoryId,
       'prNumber': prNumber,
       'commitSha': commitSha,
       'riskLevel': riskLevel.name,
@@ -65,6 +70,7 @@ class AIInsight {
   factory AIInsight.fromJson(Map<String, dynamic> json) {
     return AIInsight(
       id: json['id'] as String,
+      repositoryId: json['repositoryId'] as String?,
       prNumber: json['prNumber'] as int,
       commitSha: json['commitSha'] as String,
       riskLevel: RiskLevel.values.firstWhere(
@@ -74,6 +80,35 @@ class AIInsight {
       recommendation: json['recommendation'] as String,
       createdAt: DateTime.parse(json['createdAt'] as String),
       keyChanges: List<String>.from(json['keyChanges'] as List),
+      confidenceScore: (json['confidenceScore'] as num?)?.toDouble() ?? 0.0,
+    );
+  }
+
+  // Factory constructor for API response format
+  factory AIInsight.fromApiJson(Map<String, dynamic> json) {
+    RiskLevel convertRiskLevel(String risk) {
+      switch (risk.toLowerCase()) {
+        case 'low':
+          return RiskLevel.low;
+        case 'medium':
+          return RiskLevel.medium;
+        case 'high':
+          return RiskLevel.high;
+        default:
+          return RiskLevel.medium;
+      }
+    }
+
+    return AIInsight(
+      id: json['id'] as String,
+      repositoryId: json['repositoryId'] as String?,
+      prNumber: json['prNumber'] as int,
+      commitSha: json['commitSha'] as String? ?? '',
+      riskLevel: convertRiskLevel(json['riskLevel'] as String? ?? 'medium'),
+      summary: json['summary'] as String? ?? '',
+      recommendation: json['recommendation'] as String? ?? '',
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      keyChanges: List<String>.from(json['keyChanges'] as List? ?? []),
       confidenceScore: (json['confidenceScore'] as num?)?.toDouble() ?? 0.0,
     );
   }
