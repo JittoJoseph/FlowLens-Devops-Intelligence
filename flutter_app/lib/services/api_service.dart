@@ -170,15 +170,31 @@ class ApiService {
         url += '?repository_id=$repositoryId';
       }
 
+      _debugLog('Fetching insights from: $url');
       final response = await http.get(Uri.parse(url), headers: _headers);
 
       if (response.statusCode == 200) {
+        _debugLog('Successfully received insights response');
         final List<dynamic> data = json.decode(response.body);
-        return data.map((json) => AIInsight.fromApiJson(json)).toList();
+
+        final insights = <AIInsight>[];
+        for (final item in data) {
+          try {
+            final insight = AIInsight.fromApiJson(item);
+            insights.add(insight);
+          } catch (e) {
+            _debugLog('Error parsing insight: $e');
+            // Continue with other insights
+          }
+        }
+
+        _debugLog('Successfully parsed ${insights.length} insights');
+        return insights;
       } else {
         throw HttpException('Failed to load insights: ${response.statusCode}');
       }
     } catch (e) {
+      _debugLog('Error in getInsights: $e');
       rethrow;
     }
   }
