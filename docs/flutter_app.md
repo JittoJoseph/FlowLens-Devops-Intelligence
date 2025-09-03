@@ -104,9 +104,8 @@ This ensures the UI reflects the latest status without constant polling from the
 
 </br>
 
-> #
->
+> ‎ 
 > **</> Built by Mission Control | DevByZero 2025**
 >
 > *Defining the infinite possibilities in your DevOps pipeline.*
-> ##
+> ‎ 

@@ -45,3 +45,11 @@ DO UPDATE SET
   processed = FALSE, -- Must be set in the UPDATE clause as well!
   updated_at = now();
 ```
+
+</br>
+
+> ‎ 
+> **</> Built by Mission Control | DevByZero 2025**
+>
+> *Defining the infinite possibilities in your DevOps pipeline.*
+> ‎ 

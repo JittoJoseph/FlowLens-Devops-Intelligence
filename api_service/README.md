@@ -36,9 +36,8 @@ The service and its interactive API docs will be available at `http://localhost:
 
 </br>
 
-> #
->
+> ‎ 
 > **</> Built by Mission Control | DevByZero 2025**
 >
 > *Defining the infinite possibilities in your DevOps pipeline.*
-> ##
+> ‎ 

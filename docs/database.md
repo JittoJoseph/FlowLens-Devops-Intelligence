@@ -142,9 +142,8 @@ CREATE INDEX idx_insights_processed ON insights(processed);
 
 </br>
 
-> #
->
+> ‎ 
 > **</> Built by Mission Control | DevByZero 2025**
 >
 > *Defining the infinite possibilities in your DevOps pipeline.*
-> ##
+> ‎ 

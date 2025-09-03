@@ -56,9 +56,8 @@ To ensure backward compatibility with older clients, the following v1.0 endpoint
 
 </br>
 
-> #
->
+> ‎ 
 > **</> Built by Mission Control | DevByZero 2025**
 >
 > *Defining the infinite possibilities in your DevOps pipeline.*
-> ##
+> ‎ 

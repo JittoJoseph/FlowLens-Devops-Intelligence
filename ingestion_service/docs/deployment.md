@@ -47,3 +47,11 @@ This will run the alternative entry point that logs events to Discord instead of
 ## Monitoring and Logs
 
 You can monitor the health of your deployed service, view real-time logs, and manage environment variables directly from the Render dashboard. Check the logs to confirm that webhook events are being received and processed successfully.
+
+</br>
+
+> ‎ 
+> **</> Built by Mission Control | DevByZero 2025**
+>
+> *Defining the infinite possibilities in your DevOps pipeline.*
+> ‎ 

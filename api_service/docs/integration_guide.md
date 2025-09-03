@@ -45,9 +45,8 @@ WHERE repo_id = $1 AND pr_number = $2;
 
 </br>
 
-> #
->
+> ‎ 
 > **</> Built by Mission Control | DevByZero 2025**
 >
 > *Defining the infinite possibilities in your DevOps pipeline.*
-> ##
+> ‎ 
