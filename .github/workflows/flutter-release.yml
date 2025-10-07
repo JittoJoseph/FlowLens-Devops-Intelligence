@@ -8,6 +8,10 @@ env:
   FLUTTER_VERSION: "3.35.2"
   JAVA_VERSION: "17"
 
+# Ensure the GITHUB_TOKEN has write permissions for repository contents so releases/tags can be created.
+permissions:
+  contents: write
+
 jobs:
   # Job to build and release APK when PR is merged to main
   build-and-release:
@@ -98,6 +102,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          # Explicitly pass the token as an input to the action to avoid permission ambiguity
+          token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: v${{ steps.version_info.outputs.version }}-${{ steps.version_info.outputs.build_number }}
           name: ${{ steps.version_info.outputs.release_name }}
           body_path: CHANGELOG.md
